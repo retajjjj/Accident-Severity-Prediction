@@ -1,0 +1,49 @@
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "accident_severity_predictor"
+version = "0.0.1"
+description = "A short description of the project."
+authors = [
+  { name = "team 7" },
+]
+
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    
+]
+dependencies = [
+    "ipython",
+    "jupyterlab",
+    "matplotlib",
+    "mkdocs",
+    "notebook",
+    "numpy",
+    "pandas",
+    "pip",
+    "python-dotenv",
+    "ruff",
+    "scikit-learn",
+    "kagglehub (>=1.0.0,<2.0.0)",
+    "tqdm (>=4.67.3,<5.0.0)",
+    "pyarrow (>=23.0.1,<24.0.0)",
+    "fastparquet (>=2026.3.0,<2027.0.0)",
+]
+requires-python = "~=3.13.0"
+
+
+[tool.ruff]
+line-length = 99
+src = ["accident_severity_predictor"]
+include = ["pyproject.toml", "accident_severity_predictor/**/*.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]  # Add import sorting
+
+[tool.ruff.lint.isort]
+known-first-party = ["accident_severity_predictor"]
+force-sort-within-sections = true
+

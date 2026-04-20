@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-21T00:24:11.663583",
+  "generated_at": "2026-03-31T21:50:25.884310",
   "dimensions": {
     "accuracy": {
       "invalid_severity_values": 0,
@@ -8,8 +8,7 @@
       "out_of_bounds_longitude": 0,
       "non_positive_Number_of_Vehicles": 0,
       "negative_vehicle_age": 0,
-      "age_band_unique_values_count": 12,
-      "invalid_age_band": 171052,
+      "invalid_age_band": 4664,
       "invalid_day_of_week": 0,
       "invalid_sex_band": 76119
     },
@@ -189,7 +188,7 @@
     },
     "timeliness": {
       "earliest_date": "2005-01-01",
-      "latest_date": "2017-12-31",
+      "latest_date": "2017-12-12",
       "future_dates": 0,
       "pre_2005_dates": 0
     },
@@ -863,7 +862,7 @@
       },
       {
         "dimension": "accuracy",
-        "message": "171,052 vehicle records have invalid Age_Band_of_Driver values"
+        "message": "4,664 vehicle records have invalid Age_Band_of_Driver values"
       },
       {
         "dimension": "accuracy",
@@ -883,31 +882,31 @@
       },
       {
         "dimension": "completeness",
-        "message": "[ACCIDENTS] 'Carriageway_Hazards' is 98.1% missing (>20.0% threshold)"
+        "message": "[ACCIDENTS] 'Carriageway_Hazards' is 98.1% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[ACCIDENTS] 'Special_Conditions_at_Site' is 97.5% missing (>20.0% threshold)"
+        "message": "[ACCIDENTS] 'Special_Conditions_at_Site' is 97.5% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[ACCIDENTS] '2nd_Road_Class' is 41.2% missing (>20.0% threshold)"
+        "message": "[ACCIDENTS] '2nd_Road_Class' is 41.2% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[VEHICLES] 'Hit_Object_in_Carriageway' is 95.9% missing (>20.0% threshold)"
+        "message": "[VEHICLES] 'Hit_Object_in_Carriageway' is 95.9% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[VEHICLES] 'Hit_Object_off_Carriageway' is 91.4% missing (>20.0% threshold)"
+        "message": "[VEHICLES] 'Hit_Object_off_Carriageway' is 91.4% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[VEHICLES] 'Skidding_and_Overturning' is 87.2% missing (>20.0% threshold)"
+        "message": "[VEHICLES] 'Skidding_and_Overturning' is 87.2% missing (>20% threshold)"
       },
       {
         "dimension": "completeness",
-        "message": "[VEHICLES] 'Driver_IMD_Decile' is 33.8% missing (>20.0% threshold)"
+        "message": "[VEHICLES] 'Driver_IMD_Decile' is 33.8% missing (>20% threshold)"
       },
       {
         "dimension": "join_integrity",

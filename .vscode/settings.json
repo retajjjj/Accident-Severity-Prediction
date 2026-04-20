@@ -1,0 +1,4 @@
+{
+  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "python.analysis.extraPaths":["./accident_severity_predictor"]
+}

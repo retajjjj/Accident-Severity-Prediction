@@ -1,0 +1,72 @@
+======================================================================
+DATA PREPROCESSING REPORT
+======================================================================
+
+Generated: 2026-04-20 06:22:57
+
+----------------------------------------------------------------------
+DATA SHAPES
+----------------------------------------------------------------------
+X_train: (1086289, 7)
+X_val:   (1086290, 7)
+X_test:  (543145, 7)
+y_train: (1086289,)
+y_val:   (1086290,)
+y_test:  (543145,)
+
+----------------------------------------------------------------------
+CLASS DISTRIBUTION
+----------------------------------------------------------------------
+
+Training set:
+Accident_Severity
+Slight     926264
+Serious    145833
+Fatal       14192
+
+  Percentages:
+Accident_Severity
+Slight     85.268653
+Serious    13.424880
+Fatal       1.306466
+
+
+Validation set:
+Accident_Severity
+Slight     926264
+Serious    145834
+Fatal       14192
+
+  Percentages:
+Accident_Severity
+Slight     85.268575
+Serious    13.424960
+Fatal       1.306465
+
+
+Test set:
+Accident_Severity
+Slight     463132
+Serious     72917
+Fatal        7096
+
+  Percentages:
+Accident_Severity
+Slight     85.268575
+Serious    13.424960
+Fatal       1.306465
+
+----------------------------------------------------------------------
+SELECTED FEATURES
+----------------------------------------------------------------------
+Total features: 7
+
+   1. Did_Police_Officer_Attend_Scene_of_Accident
+   2. Vehicle_Type
+   3. Number_of_Casualties
+   4. Speed_limit
+   5. Vehicle_Manoeuvre
+   6. Engine_Capacity_.CC.
+   7. LSOA_of_Accident_Location
+
+======================================================================

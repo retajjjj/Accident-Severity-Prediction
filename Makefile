@@ -57,7 +57,39 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 
+## Download and validate data
+.PHONY: data
+data:
+	poetry run python src/data/acquire.py
+	poetry run python src/data/validate.py
 
+## Preprocess data: engineer features, select, balance (SMOTE), scale
+.PHONY: preprocess
+preprocess:
+	poetry run python src/data/preprocess.py
+
+## Run all preprocessing steps (data + preprocess)
+.PHONY: pipeline
+pipeline: data preprocess
+
+## Run unit tests with coverage
+.PHONY: test
+test:
+	poetry run pytest tests/ -v --cov=src --cov-report=html --cov-report=term
+
+## Train all models and log to MLflow
+.PHONY: train
+train:
+	poetry run python src/models/train.py
+
+## Generate EDA and evaluation report
+.PHONY: eda
+eda:
+	poetry run python src/reports/eda.py
+
+## Full pipeline: preprocess → train → evaluate
+.PHONY: full
+full: preprocess train eda
 
 #################################################################################
 # Self Documenting Commands                                                     #

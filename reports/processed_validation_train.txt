@@ -1,0 +1,140 @@
+
+=========================================================================
+UK Road Accidents — POST-PROCESSING VALIDATION (TRAIN SPLIT)
+
+2026-04-21 00:24:46
+=========================================================================
+
+Loaded features  : 2,778,678 rows × 7 columns
+Loaded target    : 2,778,678 samples
+
+-------------------------------------------------------------------------
+DIMENSION 1 — ACCURACY (Business Rule Checks)
+-------------------------------------------------------------------------
+[INFO] Speed_limit — StandardScaler applied (Z-scores)
+   • Mean: -0.000, Std: 1.000
+   • Range: [-1.556, 1.787]
+   • Out-of-bounds (±3.5σ): 0 records
+ All values within expected Z-score range
+
+[PASS] Accident_Severity — all 2,778,678 values are valid (1/2/3)
+    Class Fatal: 926,226 samples
+    Class Serious: 926,226 samples
+    Class Slight: 926,226 samples
+
+   Class Distribution (after SMOTE on train split):
+    Class       Count    Percentage  Distribution
+   ----------------------------------------------------------------------
+    Fatal     926,226        33.33%  ████████████████
+   Serious     926,226        33.33%  ████████████████
+   Slight     926,226        33.33%  ████████████████
+
+   Imbalance Ratio: 1.00x
+ [PASS] WELL BALANCED — SMOTE or stratification was effective
+
+-------------------------------------------------------------------------
+DIMENSION 2 — CONSISTENCY
+-------------------------------------------------------------------------
+⊘ [SKIP] Not applicable — processed features are already standardized
+
+-------------------------------------------------------------------------
+DIMENSION 3 — COMPLETENESS (Missing Values)
+-------------------------------------------------------------------------
+ [PASS] Zero NaN values across all 7 features
+
+-------------------------------------------------------------------------
+DIMENSION 4 — UNIQUENESS (Duplicate Detection)
+-------------------------------------------------------------------------
+[PASS] Feature matrix and target vector have matching shapes
+ [ISSUE] 692,266 fully duplicate rows found
+
+-------------------------------------------------------------------------
+DIMENSION 5 — OUTLIERS
+-------------------------------------------------------------------------
+
+IQR Method  (bounds = Q1 - 1.5*IQR  and  Q3 + 1.5*IQR):
+Feature                                    Outliers         Lower         Upper
+-------------------------------------------------------------------------
+Vehicle_Type                                      0         -4.28          4.83
+Engine_Capacity_.CC.                              0         -2.25          2.23
+road_risk_score                                   0         -3.63          4.20
+Vehicle_Manoeuvre                                 0         -4.30          4.69
+Speed_limit                                       0         -3.90          4.13
+Vehicle_Leaving_Carriageway                       0         -3.04          3.32
+LSOA_of_Accident_Location                         0         -3.36          3.41
+
+✅ [PASS] No outliers detected via IQR method
+
+Isolation Forest  (contamination=0.05, multivariate):
+Sample size: 100,000 rows
+Anomalies detected: 5,000 (5.00%)
+ [PASS] Outlier rate is acceptable (<10%)
+
+-------------------------------------------------------------------------
+DIMENSION 6 — TIMELINESS
+-------------------------------------------------------------------------
+⊘ [SKIP] Not applicable — no temporal validation in processed features
+
+-------------------------------------------------------------------------
+DIMENSION 7 — DISTRIBUTION (Feature Statistics)
+-------------------------------------------------------------------------
+
+Feature                                        Mean         Std         Min         Max
+-------------------------------------------------------------------------
+Vehicle_Type                                 -0.000       1.000      -1.118       1.539
+Engine_Capacity_.CC.                         -0.000       1.000      -1.889       1.981
+road_risk_score                               0.000       1.000      -1.872       1.261
+Vehicle_Manoeuvre                             0.000       1.000      -1.675       1.880
+Speed_limit                                  -0.000       1.000      -1.556       1.787
+Vehicle_Leaving_Carriageway                   0.000       1.000      -0.922       1.728
+LSOA_of_Accident_Location                     0.000       1.000      -1.930       1.518
+
+
+Pearson Correlation Matrix:
+                                     Vehicle_Ty  Engine_Cap  road_risk_  Vehicle_Ma  Speed_limi
+  Vehicle_Type                            1.000      -0.163      -0.054       0.562      -0.062
+  Engine_Capacity_.CC.                   -0.163       1.000       0.047      -0.025       0.070
+  road_risk_score                        -0.054       0.047       1.000      -0.165       0.929
+  Vehicle_Manoeuvre                       0.562      -0.025      -0.165       1.000      -0.169
+  Speed_limit                            -0.062       0.070       0.929      -0.169       1.000
+  ... and 2 more features (see report)
+
+Pearson vs Spearman  (|diff| > 0.10 = non-linear relationship):
+Pair                                           Pearson   Spearman    |Diff|
+-------------------------------------------------------------------------
+Vehicle_Type x Engine_Capacity_.CC.             -0.163     -0.073     0.090
+Vehicle_Type x road_risk_score                  -0.054     -0.021     0.033
+Vehicle_Type x Vehicle_Manoeuvre                 0.562      0.485     0.077
+Vehicle_Type x Speed_limit                      -0.062     -0.028     0.034
+Vehicle_Type x Vehicle_Leaving_Carriageway       0.781      0.661     0.120
+Vehicle_Type x LSOA_of_Accident_Location        -0.030     -0.013     0.017
+Engine_Capacity_.CC. x road_risk_score           0.047      0.031     0.016
+Engine_Capacity_.CC. x Vehicle_Manoeuvre        -0.025      0.028     0.053
+Engine_Capacity_.CC. x Speed_limit               0.070      0.053     0.017
+Engine_Capacity_.CC. x Vehicle_Leaving_Carriageway    -0.087     -0.047     0.040
+road_risk_score x Speed_limit                    0.929      0.907     0.022
+
+[ISSUE] 1 high-correlation pairs detected (|r| > 0.85):
+    • road_risk_score x Speed_limit: Pearson=0.929, Spearman=0.907
+
+=========================================================================
+VALIDATION COMPLETE
+=========================================================================
+
+Dimensions Checked: 6 of 8
+  ✓ 1. ACCURACY (Speed limits, class validity, balance)
+  ⊘ 2. CONSISTENCY (skip — not applicable to processed features)
+  ✓ 3. COMPLETENESS (NaNs)
+  ✓ 4. UNIQUENESS (Duplicates, shape)
+  ✓ 5. OUTLIERS (IQR, Isolation Forest)
+  ⊘ 6. TIMELINESS (skip — not applicable to processed features)
+  ✓ 7. DISTRIBUTION (Feature statistics)
+  ✓ 8. RELATIONSHIPS (Correlations)
+
+Total issues found: 2
+
+Issues by dimension:
+  [UNIQUENESS] 692266 duplicate rows
+  [RELATIONSHIPS] 1 high-correlation pairs (>0.85) found — consider feature reduction
+
+=========================================================================

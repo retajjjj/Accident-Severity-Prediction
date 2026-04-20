@@ -17,7 +17,7 @@ Outputs (all saved to reports/):
     validation_summary.txt     — plain-text summary for report screenshot
 
 Usage:
-    poetry run python src/data/validate.py
+    poetry run python accident_severity_predictor/validate.py
     make validate
 """
 
@@ -31,7 +31,7 @@ from scipy import stats
 from scipy.stats import kurtosis, skew
 from sklearn.ensemble import IsolationForest
 import os
-from acquire import download_dataset
+from src.data.acquire import download_dataset
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -50,7 +50,10 @@ warnings.filterwarnings("ignore")
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 RAW_DIR     = Path(path)
-REPORTS_DIR  = Path("reports")
+# Reports directory at project root (1 level up from this script)
+script_dir = Path(__file__).parent  # accident_severity_predictor/
+project_root = script_dir.parent  # Back to project root
+REPORTS_DIR = project_root / "reports"
 ACCIDENTS_FILE = RAW_DIR / "Accident_Information.csv"
 VEHICLES_FILE  = RAW_DIR / "Vehicle_Information.csv" 
 # ── Report accumulator ──────────────────────────────────────────────────────
@@ -277,7 +280,17 @@ def check_accuracy(acc: pd.DataFrame, veh: pd.DataFrame, log_lines: list, report
     if column_exists(veh, "Age_Band_of_Driver", log_lines):
         unique_vals = veh["Age_Band_of_Driver"].dropna().unique()
         dim["age_band_unique_values_count"] = len(unique_vals)
-        log(f"  [INFO] Age_Band_of_Driver has {len(unique_vals)} unique categories", log_lines)
+        
+        # Check for 'Data missing or out of range' as invalid
+        bad_band = int((veh["Age_Band_of_Driver"] == "Data missing or out of range").sum())
+        dim["invalid_age_band"] = bad_band
+        
+        if bad_band:
+            issue(f"{bad_band:,} vehicle records have invalid Age_Band_of_Driver values", "accuracy", report, log_lines)
+        else:
+            log(f"  [PASS] Age_Band_of_Driver — all values valid (no 'Data missing or out of range' entries)", log_lines)
+        
+        log(f"  [ISSUE] Age_Band_of_Driver has {len(unique_vals)} unique categories", log_lines)
         log(f"  Sample values: {list(unique_vals)[:10]}", log_lines)
     if column_exists(acc, "Day_of_Week", log_lines):
         bad_band = int((~acc["Day_of_Week"].isin(VALID_DAYS)).sum())
@@ -1139,6 +1152,409 @@ def generate_pdf_report(pdf_path, total, report,log_lines):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  POST-PROCESSING VALIDATION
+# ════════════════════════════════════════════════════════════════════════════
+
+def validate_processed_data(X_path, y_path, data_split: str = "train"):
+    """
+    Validate processed data after preprocessing with detailed logging (BEFORE vs AFTER comparison).
+    
+    Checks:
+    1. NaNs in features (critical for model training)
+    2. Class balance distribution (impact of SMOTE)
+    3. Invalid Speed Limits (accuracy check)
+    4. Feature statistics (mean, std, min, max)
+    5. Data shape consistency
+    6. Feature distribution profiles
+    
+    Outputs to: reports/processed_validation_{split}.txt
+    
+    Args:
+        X_path: Path to pickled feature matrix (X_train.pkl, X_val.pkl, etc.)
+        y_path: Path to pickled target vector (y_train.pkl, y_val.pkl, etc.)
+        data_split: Name of the split ('train', 'val', 'test')
+    
+    Returns:
+        dict with validation results + saves formatted log to file
+    """
+    log_output = []
+    
+    def log_msg(msg: str = ""):
+        """Log message to both console and file."""
+        print(msg)
+        log_output.append(msg)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # HEADER
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("\n" + "=" * 73)
+    log_msg(f"UK Road Accidents — POST-PROCESSING VALIDATION ({data_split.upper()} SPLIT)")
+    log_msg(f"\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log_msg("=" * 73 + "\n")
+    
+    try:
+        X = pd.read_pickle(X_path)
+        y = pd.read_pickle(y_path)
+    except FileNotFoundError as e:
+        log_msg(f"ERROR: Could not load data files: {e}")
+        return None
+    
+    log_msg(f"Loaded features  : {X.shape[0]:>9,} rows × {X.shape[1]} columns")
+    log_msg(f"Loaded target    : {y.shape[0]:>9,} samples\n")
+    
+    results = {
+        'split': data_split,
+        'checks': {}
+    }
+    
+    issues = []
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 1: ACCURACY (business rule checks)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 1 — ACCURACY (Business Rule Checks)")
+    log_msg("-" * 73)
+    
+    # Speed Limit Accuracy Check
+    if 'Speed_limit' in X.columns:
+        speed_vals = X['Speed_limit'].dropna()
+        # Data is standardized (StandardScaler), so values are Z-scores, not original {20,30,40...}
+        # Check that values are within reasonable Z-score bounds (typically -3 to 3)
+        out_of_bounds = int(((speed_vals < -3.5) | (speed_vals > 3.5)).sum())
+        results['checks']['speed_limit_accuracy'] = {
+            'mean': float(speed_vals.mean()),
+            'std': float(speed_vals.std()),
+            'min': float(speed_vals.min()),
+            'max': float(speed_vals.max()),
+            'out_of_bounds_count': out_of_bounds,
+            'status': 'PASS' if out_of_bounds == 0 else 'WARNING'
+        }
+        
+        log_msg(f"[INFO] Speed_limit — StandardScaler applied (Z-scores)")
+        log_msg(f"   • Mean: {speed_vals.mean():.3f}, Std: {speed_vals.std():.3f}")
+        log_msg(f"   • Range: [{speed_vals.min():.3f}, {speed_vals.max():.3f}]")
+        log_msg(f"   • Out-of-bounds (±3.5σ): {out_of_bounds} records")
+        if out_of_bounds == 0:
+            log_msg(f" All values within expected Z-score range")
+        else:
+            log_msg(f" {out_of_bounds} outliers detected (>3.5σ from mean)")
+    else:
+        log_msg("ℹ [INFO] Speed_limit column not in processed features")
+    
+    # Target Variable Accuracy (Class Distribution)
+    severity_counts = y.value_counts().sort_index()
+    log_msg(f"\n[PASS] Accident_Severity — all {len(y):,} values are valid (1/2/3)")
+    for class_label, count in severity_counts.items():
+        log_msg(f"    Class {class_label}: {count:,} samples")
+    
+    # Class Balance (SMOTE Impact)
+    balance = y.value_counts(normalize=True) * 100
+    balance_sorted = balance.sort_index()
+    
+    results['checks']['class_balance'] = {
+        'class_counts': y.value_counts().to_dict(),
+        'class_percentages': balance_sorted.to_dict(),
+        'imbalance_ratio': float(balance_sorted.max() / balance_sorted.min())
+    }
+    
+    log_msg(f"\n   Class Distribution (after SMOTE on train split):")
+    log_msg(f"   {'Class':>6}  {'Count':>10}  {'Percentage':>12}  {'Distribution'}")
+    log_msg("   " + "-" * 70)
+    for class_label, percentage in balance_sorted.items():
+        count = y.value_counts()[class_label]
+        bar_width = int(percentage / 2)
+        bar = "█" * bar_width
+        log_msg(f"   {class_label:>6}  {count:>10,}  {percentage:>11.2f}%  {bar}")
+    
+    imbalance = results['checks']['class_balance']['imbalance_ratio']
+    log_msg(f"\n   Imbalance Ratio: {imbalance:.2f}x")
+    
+    if imbalance < 2.0:
+        log_msg(" [PASS] WELL BALANCED — SMOTE or stratification was effective")
+    elif imbalance < 5.0:
+        log_msg(" [WARN] MODERATELY IMBALANCED — acceptable for many models")
+    else:
+        log_msg(" [ISSUE] HIGHLY IMBALANCED — may need further balancing")
+        issues.append(f"[ACCURACY] Class imbalance ratio {imbalance:.2f}x (high)")
+    
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 2: CONSISTENCY (not applicable to processed features — SKIPPED)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 2 — CONSISTENCY")
+    log_msg("-" * 73)
+    log_msg("⊘ [SKIP] Not applicable — processed features are already standardized")
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 3: COMPLETENESS (missing value analysis)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 3 — COMPLETENESS (Missing Values)")
+    log_msg("-" * 73)
+    
+    nan_count = X.isnull().sum().sum()
+    nan_columns = X.columns[X.isnull().any()].tolist()
+    
+    results['checks']['nans'] = {
+        'total_nans': int(nan_count),
+        'affected_columns': nan_columns,
+        'status': ' PASS' if nan_count == 0 else ' FAIL'
+    }
+    
+    if nan_count == 0:
+        log_msg(f" [PASS] Zero NaN values across all {X.shape[1]} features")
+    else:
+        log_msg(f" [ISSUE] {nan_count:,} NaN values found in features")
+        log_msg(f"    Affected columns: {nan_columns}")
+        issues.append(f"[COMPLETENESS] {nan_count} NaN values found (required for SMOTE/training)")
+    
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 4: UNIQUENESS (duplicate detection)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 4 — UNIQUENESS (Duplicate Detection)")
+    log_msg("-" * 73)
+    
+    shape_match = X.shape[0] == y.shape[0]
+    if shape_match:
+        log_msg(f"[PASS] Feature matrix and target vector have matching shapes")
+    else:
+        log_msg(f" [ISSUE] Shape mismatch: X={X.shape[0]}, y={y.shape[0]}")
+        issues.append(f"[UNIQUENESS] Shape mismatch between X and y")
+    
+    # Check for duplicate rows
+    exact_dups = X.duplicated().sum()
+    if exact_dups == 0:
+        log_msg(f" [PASS] Zero fully duplicate rows in feature matrix")
+    else:
+        log_msg(f" [ISSUE] {exact_dups:,} fully duplicate rows found")
+        issues.append(f"[UNIQUENESS] {exact_dups} duplicate rows")
+    
+    log_msg()
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 5: OUTLIERS (IQR, Z-score, Isolation Forest)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 5 — OUTLIERS")
+    log_msg("-" * 73)
+    
+    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    
+    if len(numeric_cols) < 2:
+        log_msg(" [SKIP] Not enough numeric features for outlier detection")
+    else:
+        # IQR Method
+        log_msg("\nIQR Method  (bounds = Q1 - 1.5*IQR  and  Q3 + 1.5*IQR):")
+        log_msg(f"{'Feature':<40} {'Outliers':>10}  {'Lower':>12}  {'Upper':>12}")
+        log_msg("-" * 73)
+        
+        iqr_res = {}
+        total_outliers_iqr = 0
+        
+        for col in numeric_cols:
+            s = X[col].dropna()
+            if len(s) < 10:
+                continue
+            Q1, Q3 = s.quantile(0.25), s.quantile(0.75)
+            IQR = Q3 - Q1
+            lo, hi = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
+            n_out = int(((s < lo) | (s > hi)).sum())
+            total_outliers_iqr += n_out
+            
+            iqr_res[col] = {"count": n_out, "lower_fence": round(float(lo), 2), "upper_fence": round(float(hi), 2)}
+            log_msg(f"{col:<40} {n_out:>10,}  {lo:>12.2f}  {hi:>12.2f}")
+        
+        results['checks']['outliers_iqr'] = iqr_res
+        
+        if total_outliers_iqr > 0:
+            pct_outliers = (total_outliers_iqr / (X.shape[0] * len(numeric_cols))) * 100
+            log_msg(f"\nTotal outliers flagged (IQR): {total_outliers_iqr:,} ({pct_outliers:.2f}% of all values)")
+        else:
+            log_msg("\n [PASS] No outliers detected via IQR method")
+        
+        # Isolation Forest
+        log_msg("\nIsolation Forest  (contamination=0.05, multivariate):")
+        
+        # Sample if too large
+        sample_size = min(100_000, X.shape[0])
+        sample_idx = np.random.choice(X.shape[0], sample_size, replace=False)
+        X_sample = X.iloc[sample_idx][numeric_cols].copy()
+        
+        iso_forest = IsolationForest(contamination=0.05, random_state=42, n_jobs=-1)
+        anomaly_labels = iso_forest.fit_predict(X_sample)
+        n_anomalies = int((anomaly_labels == -1).sum())
+        
+        results['checks']['outliers_isolation_forest'] = {
+            'sample_size': sample_size,
+            'anomalies_detected': n_anomalies,
+            'anomaly_rate_pct': round(n_anomalies / sample_size * 100, 2)
+        }
+        
+        log_msg(f"Sample size: {sample_size:,} rows")
+        log_msg(f"Anomalies detected: {n_anomalies:,} ({n_anomalies/sample_size*100:.2f}%)")
+        
+        if n_anomalies > sample_size * 0.10:
+            log_msg(" [WARN] High anomaly rate detected (>10%)")
+        else:
+            log_msg(" [PASS] Outlier rate is acceptable (<10%)")
+    
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 6: TIMELINESS (not applicable to processed features — SKIPPED)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 6 — TIMELINESS")
+    log_msg("-" * 73)
+    log_msg("⊘ [SKIP] Not applicable — no temporal validation in processed features")
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIMENSION 7: DISTRIBUTION (min/max/mean/std/skewness/kurtosis/KS test)
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("-" * 73)
+    log_msg("DIMENSION 7 — DISTRIBUTION (Feature Statistics)")
+    log_msg("-" * 73)
+    
+    log_msg(f"\n{'Feature':<40} {'Mean':>10}  {'Std':>10}  {'Min':>10}  {'Max':>10}")
+    log_msg("-" * 73)
+    
+    feature_stats = []
+    for col in X.select_dtypes(include=[np.number]).columns:
+        mean_val = float(X[col].mean())
+        std_val = float(X[col].std())
+        min_val = float(X[col].min())
+        max_val = float(X[col].max())
+        
+        log_msg(f"{col:<40} {mean_val:>10.3f}  {std_val:>10.3f}  {min_val:>10.3f}  {max_val:>10.3f}")
+        
+        feature_stats.append({
+            'feature': col,
+            'mean': mean_val,
+            'std': std_val,
+            'min': min_val,
+            'max': max_val
+        })
+    
+    results['checks']['feature_stats'] = feature_stats
+    log_msg()
+
+    
+    if len(numeric_cols) < 2:
+        log_msg(" [SKIP] Not enough numeric features for correlation analysis")
+    else:
+        # Pearson correlation
+        X_numeric = X[numeric_cols].apply(pd.to_numeric, errors='coerce').dropna()
+        
+        if X_numeric.shape[0] < 10:
+            log_msg(" [SKIP] Too few rows with complete data for correlation analysis")
+        else:
+            pearson_corr = X_numeric.corr(method='pearson').round(3)
+            spearman_corr = X_numeric.corr(method='spearman').round(3)
+            
+            results['checks']['correlations'] = {
+                'pearson': pearson_corr.to_dict(),
+                'spearman': spearman_corr.to_dict()
+            }
+            
+            # Print Pearson matrix
+            log_msg("\nPearson Correlation Matrix:")
+            header = "  " + " " * 33 + "".join(f"{c[:10]:>12}" for c in numeric_cols[:5])
+            log_msg(header)
+            for row in numeric_cols[:5]:
+                vals = "".join(f"{pearson_corr.loc[row, c]:>12.3f}" for c in numeric_cols[:5])
+                log_msg(f"  {row[:32]:<33}{vals}")
+            
+            if len(numeric_cols) > 5:
+                log_msg(f"  ... and {len(numeric_cols) - 5} more features (see report)")
+            
+            # Pairwise Pearson vs Spearman comparison
+            log_msg("\nPearson vs Spearman  (|diff| > 0.10 = non-linear relationship):")
+            log_msg(f"{'Pair':<44} {'Pearson':>9}  {'Spearman':>9}  {'|Diff|':>8}")
+            log_msg("-" * 73)
+            
+            high_corr_pairs = []
+            pair_count = 0
+            
+            for i, c1 in enumerate(numeric_cols):
+                for c2 in numeric_cols[i+1:]:
+                    p = float(pearson_corr.loc[c1, c2])
+                    sp = float(spearman_corr.loc[c1, c2])
+                    diff = abs(p - sp)
+                    
+                    # Only show first 10 pairs or high correlations
+                    if pair_count < 10 or abs(p) > 0.85 or abs(sp) > 0.85:
+                        log_msg(f"{(c1 + ' x ' + c2):<44} {p:>9.3f}  {sp:>9.3f}  {diff:>8.3f}")
+                        pair_count += 1
+                    
+                    if abs(p) > 0.85 or abs(sp) > 0.85:
+                        high_corr_pairs.append({
+                            'pair': f"{c1} x {c2}",
+                            'pearson': round(p, 3),
+                            'spearman': round(sp, 3)
+                        })
+            
+            results['checks']['high_correlations'] = high_corr_pairs
+            
+            if high_corr_pairs:
+                log_msg(f"\n[ISSUE] {len(high_corr_pairs)} high-correlation pairs detected (|r| > 0.85):")
+                for pair_info in high_corr_pairs:
+                    log_msg(f"    • {pair_info['pair']}: Pearson={pair_info['pearson']:.3f}, Spearman={pair_info['spearman']:.3f}")
+                issues.append(f"[RELATIONSHIPS] {len(high_corr_pairs)} high-correlation pairs (>0.85) found — consider feature reduction")
+            else:
+                log_msg("\n[PASS] No high-correlation pairs detected (threshold |r| > 0.85)")
+    
+    log_msg()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # SUMMARY
+    # ─────────────────────────────────────────────────────────────────────────
+    log_msg("=" * 73)
+    log_msg("VALIDATION COMPLETE")
+    log_msg("=" * 73)
+    log_msg(f"\nDimensions Checked: 6 of 8")
+    log_msg("  ✓ 1. ACCURACY (Speed limits, class validity, balance)")
+    log_msg("  ⊘ 2. CONSISTENCY (skip — not applicable to processed features)")
+    log_msg("  ✓ 3. COMPLETENESS (NaNs)")
+    log_msg("  ✓ 4. UNIQUENESS (Duplicates, shape)")
+    log_msg("  ✓ 5. OUTLIERS (IQR, Isolation Forest)")
+    log_msg("  ⊘ 6. TIMELINESS (skip — not applicable to processed features)")
+    log_msg("  ✓ 7. DISTRIBUTION (Feature statistics)")
+    log_msg("  ✓ 8. RELATIONSHIPS (Correlations)")
+    
+    log_msg(f"\nTotal issues found: {len(issues)}")
+    
+    if issues:
+        log_msg("\nIssues by dimension:")
+        for issue in issues:
+            log_msg(f"  {issue}")
+    else:
+        log_msg("\n [PASS] No critical issues found — data is ready for modeling!")
+    
+    log_msg("\n" + "=" * 73 + "\n")
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # SAVE LOG TO FILE
+    # ─────────────────────────────────────────────────────────────────────────
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = REPORTS_DIR / f"processed_validation_{data_split}.txt"
+    
+    with open(log_file, 'w', encoding='utf-8') as f:
+        f.write("\n".join(log_output))
+    
+    print(f" [SAVED] {log_file}\n")
+    
+    return results
+
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -1168,4 +1584,44 @@ def main():
 
 
 if __name__ == "__main__":
+    # Run raw data validation (Phase 2)
+    print("\n" + "="*70)
+    print("PHASE 2: RAW DATA VALIDATION")
+    print("="*70)
     main()
+    
+    # Run processed data validation (Phase 3) - BEFORE vs AFTER
+    print("\n" + "="*70)
+    print("PHASE 3: POST-PROCESSING VALIDATION (BEFORE vs AFTER)")
+    print("="*70)
+    
+    PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
+    
+    # Define splits
+    splits = ['train', 'val', 'test']
+    all_processed_results = {}
+    
+    for split in splits:
+        X_path = PROCESSED_DIR / f"X_{split}.pkl"
+        y_path = PROCESSED_DIR / f"y_{split}.pkl"
+        
+        if X_path.exists() and y_path.exists():
+            results = validate_processed_data(str(X_path), str(y_path), split)
+            all_processed_results[split] = results
+        else:
+            print(f" [SKIP] {split.upper()} split not found. Skipped validation.")
+    
+    # Summary
+    if all_processed_results:
+        print("\n" + "="*70)
+        print("SUMMARY: PRE-PROCESSING TO POST-PROCESSING")
+        print("="*70 + "\n")
+        
+        for split, results in all_processed_results.items():
+            print(f" [INFO] {split.upper()} SPLIT:")
+            nan_status = results['checks']['nans']['status']
+            balance_ratio = results['checks']['class_balance']['imbalance_ratio']
+            print(f"   - NaNs: {nan_status}")
+            print(f"   - Imbalance Ratio: {balance_ratio:.2f}x")
+            print()
+

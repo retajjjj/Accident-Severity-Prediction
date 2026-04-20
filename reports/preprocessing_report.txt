@@ -1,0 +1,72 @@
+======================================================================
+DATA PREPROCESSING REPORT
+======================================================================
+
+Generated: 2026-04-21 00:20:34
+
+----------------------------------------------------------------------
+DATA SHAPES
+----------------------------------------------------------------------
+X_train: (2778678, 7)
+X_val:   (1086248, 7)
+X_test:  (543124, 7)
+y_train: (2778678,)
+y_val:   (1086248,)
+y_test:  (543124,)
+
+----------------------------------------------------------------------
+CLASS DISTRIBUTION
+----------------------------------------------------------------------
+
+Training set:
+Accident_Severity
+Slight     926226
+Serious    926226
+Fatal      926226
+
+  Percentages:
+Accident_Severity
+Slight     33.333333
+Serious    33.333333
+Fatal      33.333333
+
+
+Validation set:
+Accident_Severity
+Slight     926226
+Serious    145831
+Fatal       14191
+
+  Percentages:
+Accident_Severity
+Slight     85.268373
+Serious    13.425203
+Fatal       1.306424
+
+
+Test set:
+Accident_Severity
+Slight     463113
+Serious     72916
+Fatal        7095
+
+  Percentages:
+Accident_Severity
+Slight     85.268373
+Serious    13.425295
+Fatal       1.306332
+
+----------------------------------------------------------------------
+SELECTED FEATURES
+----------------------------------------------------------------------
+Total features: 7
+
+   1. Vehicle_Type
+   2. Engine_Capacity_.CC.
+   3. road_risk_score
+   4. Vehicle_Manoeuvre
+   5. Speed_limit
+   6. Vehicle_Leaving_Carriageway
+   7. LSOA_of_Accident_Location
+
+======================================================================

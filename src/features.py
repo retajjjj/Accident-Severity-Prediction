@@ -5,14 +5,17 @@ This module provides functions for creating, transforming, and selecting feature
 for the accident severity classification task.
 
 Helper Functions:
-    - create_temporal_features()    : Extract hour, day, weekend flags
-    - create_lighting_features()    : Encode darkness conditions
-    - create_weather_features()     : Encode adverse weather conditions
-    - create_road_risk_features()   : Composite risk score from speed and road type
-    - create_vehicle_features()     : Aggregate vehicle-level attributes
-    - encode_categorical_features() : One-hot encode categorical variables
-    - select_features_statistical() : Correlation-based feature selection
-    - select_features_model_based() : Tree-based feature importance
+    - create_temporal_features()            : Extract hour, day, weekend flags
+    - create_lighting_features()            : Encode darkness conditions
+    - create_weather_features()             : Encode adverse weather conditions
+    - create_road_risk_features()           : Composite risk score from speed and road type
+    - create_weather_composite_features()   : Combine weather with other risk factors
+    - create_vehicle_features()             : Aggregate vehicle-level attributes
+    - encode_categorical_features()         : One-hot encode categorical variables
+    - detect_and_handle_outliers()          : IQR-based outlier detection and handling
+    - handle_missing_values()               : Drop high-missing columns, impute others
+    - select_features_statistical()         : Correlation-based feature selection
+    - select_features_model_based()         : Tree-based feature importance
 """
 
 import logging
@@ -130,6 +133,64 @@ def create_weather_features(df: pd.DataFrame) -> pd.DataFrame:
         df['is_adverse_weather'] = df['is_adverse_weather'] | (df['cldc'].fillna(0) >= 6).astype(int)
     
     logger.info("✓ Weather features created (is_adverse_weather)")
+    return df
+
+
+def create_weather_composite_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create composite features combining weather with other risk factors.
+    
+    Creates:
+        - adverse_dark: 1 if adverse weather AND dark conditions (high-risk combination)
+        - precip_single_carriageway: 1 if precipitation > threshold AND single carriageway
+        - temp_road_risk: Temperature-adjusted road risk score
+        - seasonal_risk: Seasonal risk indicator based on temperature and month
+    
+    Args:
+        df: DataFrame with weather and road features
+    
+    Returns:
+        DataFrame with composite weather features added
+    """
+    df = df.copy()
+    
+    # 1. Adverse weather + darkness (high-risk combination)
+    if 'is_adverse_weather' in df.columns and 'is_dark' in df.columns:
+        df['adverse_dark'] = (df['is_adverse_weather'] * df['is_dark']).astype(int)
+    else:
+        df['adverse_dark'] = 0
+        logger.warning("is_adverse_weather or is_dark not found, adverse_dark set to 0")
+    
+    # 2. Precipitation on single carriageway (slippery conditions on high-speed roads)
+    if 'prcp' in df.columns and 'Road_Type' in df.columns:
+        df['precip_single_carriageway'] = (
+            (df['prcp'].fillna(0) > 1.0) &  # >1mm precipitation (light rain threshold)
+            (df['Road_Type'].fillna('') == 'Single carriageway')
+        ).astype(int)
+    else:
+        df['precip_single_carriageway'] = 0
+        logger.warning("prcp or Road_Type not found, precip_single_carriageway set to 0")
+    
+    # 3. Temperature-adjusted road risk (cold temps increase risk on high-speed roads)
+    if 'temp' in df.columns and 'road_risk_score' in df.columns:
+        # Cold (<5°C) increases risk on high road_risk_score
+        df['temp_road_risk'] = df['road_risk_score'] * (1 + (df['temp'].fillna(15) < 5).astype(int) * 0.5)
+    else:
+        df['temp_road_risk'] = df.get('road_risk_score', 0)
+        logger.warning("temp or road_risk_score not found, temp_road_risk set to road_risk_score")
+    
+    # 4. Seasonal risk (winter months + cold temps)
+    if 'temp' in df.columns and 'month' in df.columns:
+        # Winter months (Dec, Jan, Feb) with cold temps (<5°C)
+        df['seasonal_risk'] = (
+            (df['month'].isin([12, 1, 2])) & 
+            (df['temp'].fillna(15) < 5)
+        ).astype(int)
+    else:
+        df['seasonal_risk'] = 0
+        logger.warning("temp or month not found, seasonal_risk set to 0")
+    
+    logger.info("✓ Composite weather features created (adverse_dark, precip_single_carriageway, temp_road_risk, seasonal_risk)")
     return df
 
 
@@ -306,6 +367,9 @@ def handle_missing_values(df: pd.DataFrame, missing_threshold: float = 50.0) -> 
     """
     Drop columns with high missingness and impute remaining missing values.
     
+    Weather columns (temp, prcp, wspd, etc.) are retained even with high missingness
+    and imputed using median, as they provide valuable predictive information.
+    
     Args:
         df: DataFrame to process
         missing_threshold: % threshold above which to drop column (default: 50%)
@@ -318,9 +382,18 @@ def handle_missing_values(df: pd.DataFrame, missing_threshold: float = 50.0) -> 
     # Calculate missing %
     missing_pct = (df.isna().sum() / len(df)) * 100
     
-    # Drop high-missing columns (per Phase 2 validation)
+    # Weather columns to retain regardless of missingness
+    weather_cols = ['time', 'temp', 'tmin', 'tmax', 'rhum', 'prcp', 'snwd', 'wspd', 'wpgt', 'pres', 'tsun', 'cldc']
+    
+    # Drop high-missing columns (per Phase 2 validation), but keep weather columns
     cols_to_drop = missing_pct[missing_pct > missing_threshold].index.tolist()
-    logger.info(f"Dropping columns with >{missing_threshold}% missing: {cols_to_drop}")
+    cols_to_drop = [col for col in cols_to_drop if col not in weather_cols]
+    
+    if cols_to_drop:
+        logger.info(f"Dropping columns with >{missing_threshold}% missing: {cols_to_drop}")
+    else:
+        logger.info(f"No non-weather columns with >{missing_threshold}% missing")
+    
     df = df.drop(columns=cols_to_drop, errors='ignore')
     
     # Impute remaining missing values
@@ -417,7 +490,7 @@ def scale_numerical_features(df: pd.DataFrame,
 def select_features_statistical(X: pd.DataFrame, 
                                y: pd.Series,
                                method: str = 'spearman',
-                               top_k: int = 7) -> Tuple[List[str], pd.DataFrame]:
+                               top_k: int = 10) -> Tuple[List[str], pd.DataFrame]:
     """
     Select top-k features using statistical correlation methods.
     
@@ -460,7 +533,7 @@ def select_features_statistical(X: pd.DataFrame,
 
 def select_features_model_based(X: pd.DataFrame, 
                                y: pd.Series,
-                               top_k: int = 7,
+                               top_k: int = 10,
                                random_state: int = 42) -> Tuple[List[str], pd.DataFrame]:
     """
     Select top-k features using Random Forest feature importance.
@@ -505,6 +578,40 @@ def select_features_model_based(X: pd.DataFrame,
         'Did_Police_Officer_Attend_Scene_of_Accident'  # Result of severity, recorded post-incident
     ]
     importance_scores = importance_scores[~importance_scores['feature'].isin(leakage_features)]
+    
+    # SYSTEMATIC CORRELATION FILTER: Remove one feature from each highly correlated pair
+    # Calculate correlation matrix for top-k features and remove lower-importance features
+    # from pairs with correlation > 0.8
+    selected_temp = importance_scores.head(top_k)['feature'].tolist()
+    if len(selected_temp) > 1:
+        # Get correlation matrix for selected features
+        corr_matrix = X[selected_temp].corr()
+        
+        # Find highly correlated pairs (correlation > 0.8)
+        high_corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_val = corr_matrix.iloc[i, j]
+                if abs(corr_val) > 0.8:
+                    feat1 = corr_matrix.columns[i]
+                    feat2 = corr_matrix.columns[j]
+                    high_corr_pairs.append((feat1, feat2, corr_val))
+        
+        # Remove lower-importance feature from each pair
+        features_to_remove = set()
+        for feat1, feat2, corr_val in high_corr_pairs:
+            imp1 = importance_scores[importance_scores['feature'] == feat1]['importance'].values[0]
+            imp2 = importance_scores[importance_scores['feature'] == feat2]['importance'].values[0]
+            
+            if imp1 > imp2:
+                features_to_remove.add(feat2)
+                logger.info(f"  ⚠ Removed {feat2} due to high correlation with {feat1} (r={corr_val:.3f}, kept higher importance)")
+            else:
+                features_to_remove.add(feat1)
+                logger.info(f"  ⚠ Removed {feat1} due to high correlation with {feat2} (r={corr_val:.3f}, kept higher importance)")
+        
+        if features_to_remove:
+            importance_scores = importance_scores[~importance_scores['feature'].isin(features_to_remove)]
     
     selected_features = importance_scores.head(top_k)['feature'].tolist()
     

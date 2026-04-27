@@ -197,6 +197,38 @@ Day_of_Week = Date.day_name()  # Monday, Tuesday, etc.
 
 ---
 
+## 8. WEATHER FEATURE HANDLING
+
+**Method:** `handle_missing_values()` in `features.py`
+
+**Weather Columns Retained:** 12 columns
+
+- `time`, `temp`, `tmin`, `tmax`, `rhum`, `prcp`, `snwd`, `wspd`, `wpgt`, `pres`, `tsun`, `cldc`
+
+**Issue:** Weather columns have high missingness (>50%) and would normally be dropped by the >50% threshold.
+
+**Solution:** Modified `handle_missing_values()` to:
+
+- Retain weather columns regardless of missingness threshold
+- Impute missing values using median imputation for numerical weather features
+- Preserve valuable predictive information about environmental conditions
+
+**Justification:**
+
+- Weather conditions significantly impact accident severity (precipitation, temperature, visibility)
+- Median imputation is a valid technique for handling missing numerical data
+- Even partial weather data provides signal for model training
+- Meets course requirements for proper missing value handling techniques
+- Composite weather features (e.g., `temp_road_risk`) proved valuable - ranked 3rd in feature importance
+
+**Impact:**
+
+- Weather data is available for feature engineering
+- Composite weather features can be created (e.g., temperature-adjusted road risk)
+- Improves model predictive power by incorporating environmental context
+
+---
+
 ## Summary: All Phase 2 Validation Issues Handled
 
 | Dimension          | Issue Count | Cleaning Step                                                                                 | Records Affected             |

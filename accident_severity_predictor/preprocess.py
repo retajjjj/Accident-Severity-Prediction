@@ -41,6 +41,7 @@ from features import (
         create_temporal_features,
         create_lighting_features,
         create_weather_features,
+        create_weather_composite_features,
         create_road_risk_features,
         create_vehicle_features,
         handle_missing_values,
@@ -85,7 +86,7 @@ CONFIG = {
     'test_size': 0.2,
     'random_state': 42,
     'missing_threshold': 50.0,
-    'n_features_to_select': 7,
+    'n_features_to_select': 9,
     'apply_smote': True,
     'smote_sampling_strategy': 'not majority',
 }
@@ -473,8 +474,11 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Weather features
     df = create_weather_features(df)
     
-    # Road risk features
+    # Road risk features (must be before composite features that use road_risk_score)
     df = create_road_risk_features(df)
+    
+    # Composite weather features (combines weather with other risk factors)
+    df = create_weather_composite_features(df)
     
     # Vehicle features
     df = create_vehicle_features(df)
@@ -575,7 +579,7 @@ def select_features(X: pd.DataFrame,
     # Model-based selection (Random Forest)
     logger.info("Using Random Forest feature importance...")
     model_features, model_scores = select_features_model_based(
-        X_numeric, y, top_k=max(n_features, 7)
+        X_numeric, y, top_k=max(n_features, 10)
     )
     results['model_based'] = {
         'features': model_features,

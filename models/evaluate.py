@@ -3,6 +3,7 @@ import mlflow.sklearn
 import pickle
 import json
 from pathlib import Path
+from typing import Any, Dict, cast
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import (
@@ -12,8 +13,8 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-from src.models.baseline import BaselineModel
-from src.models.logistic_regression import LogisticRegressionModel
+from models.baseline import BaselineModel
+from models.logistic_regression import LogisticRegressionModel
 
 
 def load_processed_split(split_name: str):
@@ -62,17 +63,20 @@ class Evaluate:
 
             # 1. Accuracy and summary metrics
             acc = accuracy_score(self.y_test, y_pred)
-            report_dict = classification_report(
-                self.y_test,
-                y_pred,
-                labels=self.class_names,
-                target_names=self.class_names,
-                zero_division=0,
-                output_dict=True,
+            report_dict: Dict[str, Any] = cast(
+                Dict[str, Any],
+                classification_report(
+                    self.y_test,
+                    y_pred,
+                    labels=self.class_names,
+                    target_names=self.class_names,
+                    zero_division=0,
+                    output_dict=True,
+                ),
             )
 
-            macro_f1 = report_dict["macro avg"]["f1-score"]
-            weighted_f1 = report_dict["weighted avg"]["f1-score"]
+            macro_f1: float = report_dict["macro avg"]["f1-score"]
+            weighted_f1: float = report_dict["weighted avg"]["f1-score"]
             mlflow.log_metric("accuracy", float(acc))
             mlflow.log_metric("macro_f1", float(macro_f1))
             mlflow.log_metric("weighted_f1", float(weighted_f1))

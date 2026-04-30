@@ -1,5 +1,7 @@
 import mlflow
 import mlflow.sklearn
+import mlflow.xgboost
+import mlflow.catboost
 import pickle
 import json
 from pathlib import Path
@@ -15,24 +17,18 @@ from sklearn.metrics import (
 
 from models.baseline import BaselineModel
 from models.logistic_regression import LogisticRegressionModel
-
-
-def load_processed_split(split_name: str):
-    """Load a processed split artifact using a standard string path."""
-    # This assumes your terminal is currently running from the main project folder
-    file_path = f"data/processed/{split_name}.pkl"
-    with open(file_path, "rb") as f:
-        return pickle.load(f)
-
-
-# Load the data
-X_train = load_processed_split("X_train")
-y_train = load_processed_split("y_train")
-X_test = load_processed_split("X_test")
-y_test = load_processed_split("y_test")
+from models.random_forest import RandomForestModel
+from models.xgboost_model import XGBoostModel
+from models.catboost_model import CatBoostModel
 
 ARTIFACTS_DIR = Path("reports") / "mlflow_artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_processed_split(split_name: str):
+    file_path = f"data/processed/{split_name}.pkl"
+    with open(file_path, "rb") as f:
+        return pickle.load(f)
 
 
 class Evaluate:
@@ -118,35 +114,41 @@ class Evaluate:
                 json.dump(report_dict, f, indent=2)
             mlflow.log_artifact(str(report_path), artifact_path="reports")
 
-            # 4. Model artifact
-            mlflow.sklearn.log_model(estimator, artifact_path="model")
+            # 4. Model artifact — use correct MLflow flavor per model type
+            try:
+                from xgboost import XGBClassifier
+                from catboost import CatBoostClassifier
+                if isinstance(estimator, XGBClassifier):
+                    mlflow.xgboost.log_model(estimator, artifact_path="model")
+                elif isinstance(estimator, CatBoostClassifier):
+                    mlflow.catboost.log_model(estimator, artifact_path="model")
+                else:
+                    mlflow.sklearn.log_model(estimator, artifact_path="model")
+            except Exception:
+                mlflow.sklearn.log_model(estimator, artifact_path="model")
 
 
 if __name__ == "__main__":
-    # Create a dedicated folder in MLflow for this project
+    X_train = load_processed_split("X_train")
+    y_train = load_processed_split("y_train")
+    X_test = load_processed_split("X_test")
+    y_test = load_processed_split("y_test")
+
     mlflow.set_experiment("Accident_Severity_Pipeline")
     correct_labels = ['Fatal', 'Serious', 'Slight']
 
+    models = [
+        ("Baseline_Constant_Slight", BaselineModel(strategy="constant", constant="Slight")),
+        ("Baseline_Stratified", BaselineModel(strategy="stratified")),
+        ("Baseline_Most_Frequent", BaselineModel(strategy="most_frequent")),
+        ("Logistic_Regression", LogisticRegressionModel()),
+        ("Random_Forest", RandomForestModel()),
+        ("XGBoost", XGBoostModel()),
+        ("CatBoost", CatBoostModel()),
+    ]
 
-    baseline_constant = BaselineModel(strategy="constant", constant="Slight")
-    baseline_constant.fit(X_train, y_train)
-    evaluator_1 = Evaluate(X_test, y_test, baseline_constant, class_names=correct_labels)
-    evaluator_1.evaluate(run_name="Baseline_Constant_Slight")
-
-
-    baseline_stratified = BaselineModel(strategy="stratified")
-    baseline_stratified.fit(X_train, y_train)
-    evaluator_2 = Evaluate(X_test, y_test, baseline_stratified, class_names=correct_labels)
-    evaluator_2.evaluate(run_name="Baseline_Stratified")
-
-
-    baseline_frequent = BaselineModel(strategy="most_frequent")
-    baseline_frequent.fit(X_train, y_train)
-    evaluator_3 = Evaluate(X_test, y_test, baseline_frequent, class_names=correct_labels)
-    evaluator_3.evaluate(run_name="Baseline_Most_Frequent")
-
-
-    logistic_model = LogisticRegressionModel()
-    logistic_model.fit(X_train, y_train)
-    evaluator_lr = Evaluate(X_test, y_test, logistic_model, class_names=correct_labels)
-    evaluator_lr.evaluate(run_name="Logistic_Regression")
+    for run_name, model in models:
+        print(f"\nTraining {run_name}...")
+        model.fit(X_train, y_train)
+        evaluator = Evaluate(X_test, y_test, model, class_names=correct_labels)
+        evaluator.evaluate(run_name=run_name)

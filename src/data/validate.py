@@ -723,7 +723,7 @@ def check_distribution(acc: pd.DataFrame, veh: pd.DataFrame, log_lines: list, re
 
     COLS_ACC = ["Speed_limit", "Number_of_Casualties", "Number_of_Vehicles",
                 "Latitude", "Longitude"]
-    COLS_VEH = ["Age_of_Vehicle", "Engine_Capacity_.CC."]
+    COLS_VEH = ["Age_of_Vehicle", "Engine_Capacity_.CC.","Driver_IMD_Decile"]
 
     log(f"\n  {'Column':<42} {'Min':>7} {'Max':>8} {'Mean':>8} "
         f"{'Median':>8} {'Std':>8} {'Skew':>7} {'Kurt':>7}  {'Card':>6}", log_lines)
@@ -734,7 +734,7 @@ def check_distribution(acc: pd.DataFrame, veh: pd.DataFrame, log_lines: list, re
     hist_res  = {}
 
     for df, cols, label in [(acc, COLS_ACC, "accidents"),
-                             (veh, COLS_VEH, "vehicles")]:
+                            (veh, COLS_VEH, "vehicles")]:
         for col in cols:
             if not column_exists(df, col, log_lines):
                 continue

@@ -13,13 +13,18 @@ from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
+        f1_score,
 )
-
+from sklearn.ensemble import VotingClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.ensemble import VotingClassifier
 from models.baseline import BaselineModel
 from models.logistic_regression import LogisticRegressionModel
 from models.random_forest import RandomForestModel
 from models.xgboost_model import XGBoostModel
 from models.catboost_model import CatBoostModel
+from xgboost import XGBClassifier
+from catboost import CatBoostClassifier
 
 ARTIFACTS_DIR = Path("reports") / "mlflow_artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -116,8 +121,7 @@ class Evaluate:
 
             # 4. Model artifact — use correct MLflow flavor per model type
             try:
-                from xgboost import XGBClassifier
-                from catboost import CatBoostClassifier
+
                 if isinstance(estimator, XGBClassifier):
                     mlflow.xgboost.log_model(estimator, artifact_path="model")
                 elif isinstance(estimator, CatBoostClassifier):
@@ -126,7 +130,76 @@ class Evaluate:
                     mlflow.sklearn.log_model(estimator, artifact_path="model")
             except Exception:
                 mlflow.sklearn.log_model(estimator, artifact_path="model")
+    
+    
 
+
+    def find_best_thresholds(model, X_val, y_val, classes):
+        """
+        For each class, find the probability threshold that maximizes macro F1.
+        Works for any model with predict_proba().
+        """
+        probs = model.predict_proba(X_val)  # shape (n, 3)
+        
+        best_thresholds = {}
+        
+        for i, cls in enumerate(classes):
+            best_t = 0.33
+            best_f1 = 0.0
+            for t in np.arange(0.1, 0.9, 0.02):
+                # predict this class if its prob exceeds threshold t
+                preds = np.where(probs[:, i] >= t, cls, None)
+                # fill non-predictions with argmax of remaining
+                mask = preds == None
+                if mask.sum() > 0:
+                    remaining = probs.copy()
+                    remaining[:, i] = 0
+                    preds[mask] = classes[np.argmax(remaining[mask], axis=1)]
+                f1 = f1_score(y_val, preds, average='macro', zero_division=0)
+                if f1 > best_f1:
+                    best_f1 = f1
+                    best_t = t
+            best_thresholds[cls] = best_t
+        
+        return best_thresholds
+
+
+    def predict_with_thresholds(model, X_test, thresholds, classes):
+        """Apply per-class thresholds instead of argmax."""
+        probs = model.predict_proba(X_test)
+        n = len(probs)
+        predictions = []
+        
+        for i in range(n):
+            p = probs[i]
+            # check each class threshold in priority order: Fatal first
+            pred = classes[np.argmax(p)]  # fallback
+            for j, cls in enumerate(classes):
+                if p[j] >= thresholds[cls]:
+                    pred = cls
+                    break
+            predictions.append(pred)
+        
+        return np.array(predictions)
+    def build_voting_ensemble(rf_model, xgb_model, cat_model, lr_model):
+        """
+        Soft-voting ensemble. Each model votes with probability weights,
+        not just class labels.
+        """
+        
+        ensemble = VotingClassifier(
+            estimators=[
+                ('rf',  rf_model.model),
+                ('xgb', xgb_model.model),   # needs predict_proba exposed
+                ('cat', cat_model.model),
+                ('lr',  lr_model.model),
+            ],
+            voting='soft',           # use probabilities, not hard labels
+            weights=[2, 2, 2, 1],   # down-weight LR slightly
+        )
+        return ensemble
+    
+    
 
 if __name__ == "__main__":
     X_train = load_processed_split("X_train")
@@ -145,6 +218,7 @@ if __name__ == "__main__":
         ("Random_Forest", RandomForestModel()),
         ("XGBoost", XGBoostModel()),
         ("CatBoost", CatBoostModel()),
+        
     ]
 
     for run_name, model in models:

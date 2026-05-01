@@ -49,6 +49,7 @@ from src.features import (
         encode_categorical_features,
         select_features_model_based,
         apply_smote,
+        apply_smote_tomek,
     )
 
 
@@ -86,7 +87,7 @@ CONFIG = {
     'test_size': 0.2,
     'random_state': 42,
     'missing_threshold': 50.0,
-    'n_features_to_select': 9,
+    'n_features_to_select': 20,
     'apply_smote': True,
     'smote_sampling_strategy': 'not majority',
 }
@@ -674,7 +675,9 @@ def prepare_train_val_test_split(df: pd.DataFrame,
     logger.info("Class distribution BEFORE SMOTE:\n")
     logger.info("Training set:")
     logger.info(y_train.value_counts().to_string())
-    
+
+
+
     # Apply SMOTE to training data ONLY
     if CONFIG['apply_smote']:
         logger.info(f"\n✓ Applying SMOTE to training split only...")
@@ -683,6 +686,7 @@ def prepare_train_val_test_split(df: pd.DataFrame,
             sampling_strategy=CONFIG['smote_sampling_strategy'],
             random_state=CONFIG['random_state']
         )
+        #X_train, y_train = apply_smote_tomek(X_train, y_train, random_state=CONFIG['random_state'])
     
     # Scale features (fit on training data, apply to all)
     logger.info(f"\n✓ Fitting scaler on training data...")

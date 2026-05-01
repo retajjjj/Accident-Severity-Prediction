@@ -619,6 +619,7 @@ def select_features_model_based(X: pd.DataFrame,
     return selected_features, importance_scores
 
 
+
 def apply_smote(X_train: pd.DataFrame, 
                y_train: pd.Series,
                sampling_strategy: str = 'not majority',
@@ -642,3 +643,16 @@ def apply_smote(X_train: pd.DataFrame,
     logger.info(f"  Class distribution after SMOTE:\n{pd.Series(y_train_balanced).value_counts()}")
     
     return pd.DataFrame(X_train_balanced, columns=X_train.columns), pd.Series(y_train_balanced)
+
+
+from imblearn.combine import SMOTETomek
+
+def apply_smote_tomek(X_train, y_train, random_state=42):
+    """
+    SMOTETomek: oversample minority + clean boundary.
+    Better than vanilla SMOTE for overlapping classes.
+    """
+    smt = SMOTETomek(random_state=random_state)
+    X_res, y_res = smt.fit_resample(X_train, y_train)
+    print(f"After SMOTETomek: {pd.Series(y_res).value_counts().to_dict()}")
+    return pd.DataFrame(X_res, columns=X_train.columns), pd.Series(y_res)

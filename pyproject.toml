@@ -3,7 +3,7 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [project]
-name = "accident_severity_predictor"
+name = "src"
 version = "0.0.1"
 description = "A short description of the project."
 authors = [
@@ -38,6 +38,8 @@ dependencies = [
     "kagglehub (>=0.2,<0.3)",
     "meteostat (>=2.1.4,<3.0.0)",
     "sqlalchemy (>=2.0.48,<3.0.0)",
+    "seaborn (>=0.13.2,<0.14.0)",
+    "imblearn (>=0.0,<0.1)",
 ]
 requires-python = ">=3.11,<4"
 

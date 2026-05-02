@@ -1,4 +1,7 @@
 {
-  "python-envs.defaultEnvManager": "ms-python.python:system",
-  "python.analysis.extraPaths":["./accident_severity_predictor"]
+  "python-envs.defaultEnvManager": "ms-python.python:poetry",
+  "python.analysis.extraPaths": [
+    "./accident_severity_predictor"
+  ],
+  "python-envs.defaultPackageManager": "ms-python.python:poetry"
 }

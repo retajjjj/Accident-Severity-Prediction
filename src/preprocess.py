@@ -70,7 +70,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
 # Paths
-PROJECT_ROOT = Path(__file__).parent.parent  # Go up to project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # Go up to project root
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 INTERIM_DIR = DATA_DIR / "interim"

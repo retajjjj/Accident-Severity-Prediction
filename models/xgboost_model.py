@@ -5,7 +5,7 @@ Contract (same for every model in this project):
   fit(X_train, y_train)          → trains; y_train must be string labels
   predict(X_test)                → returns np.ndarray of string labels
   predict_proba(X_test)          → returns (n_samples, 3) float array,
-                                   columns ALWAYS in ["Fatal","Serious","Slight"] order
+                                columns ALWAYS in ["Fatal","Serious","Slight"] order
 """
 
 import numpy as np

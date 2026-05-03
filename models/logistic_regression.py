@@ -9,7 +9,6 @@ class LogisticRegressionModel:
     def __init__(self, max_iter=2000, C=0.1):
         self.model = LogisticRegression(
             max_iter=max_iter,
-            class_weight="balanced",
             C=C,
             solver="saga",
         )

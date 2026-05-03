@@ -81,16 +81,7 @@ def save_pkl(obj, path: Path):
 # 
 # SMOTE — cached
 # 
-
 def load_or_create_balanced_train(X_train, y_train):
-    """
-    Load cached balanced training data if it exists.
-    Otherwise run SMOTETomek (or SMOTE), save to cache, return balanced data.
-
-    SMOTE is ONLY applied to training data — never val or test.
-
-    To force re-run: delete data/processed/X_train_balanced.pkl
-    """
     if BALANCED_X_PATH.exists() and BALANCED_Y_PATH.exists():
         print("  [SMOTE] Loading cached balanced training data...")
         t0 = time.time()
@@ -98,16 +89,21 @@ def load_or_create_balanced_train(X_train, y_train):
         y_bal = np.array(load_split("y_train_balanced"), dtype=str)
         print(f"  [SMOTE] Loaded in {time.time()-t0:.1f}s  shape={X_bal.shape}")
         counts = dict(zip(*np.unique(y_bal, return_counts=True)))
-        print(f"  [SMOTE] Cached distribution: { {c: counts.get(c,0) for c in CORRECT_LABELS} }")
+        print(f"  [SMOTE] Cached: { {c: counts.get(c,0) for c in CORRECT_LABELS} }")
         return X_bal, y_bal
 
-    # Convert to DataFrame if needed (SMOTE requires it for column names)
     if not isinstance(X_train, pd.DataFrame):
         X_train = pd.DataFrame(X_train)
 
+    col_names = X_train.columns.tolist()
+
+    # Cast to float64 — nullable int dtypes (Int64) crash when SMOTE
+    # tries to write float64 synthetic samples back into them
+    X_train = X_train.astype(float)
+
     print(f"\n  [SMOTE] Running {'SMOTETomek' if USE_SMOTE_TOMEK else 'SMOTE'}...")
     print(f"  [SMOTE] Input shape: {X_train.shape}")
-    print(f"  [SMOTE] Strategy: {SMOTE_STRATEGY}  (balances all classes to specified strategy)")
+    print(f"  [SMOTE] Strategy: {SMOTE_STRATEGY}")
     print(f"  [SMOTE] Input distribution:")
     for cls in CORRECT_LABELS:
         n = (y_train == cls).sum()
@@ -121,35 +117,26 @@ def load_or_create_balanced_train(X_train, y_train):
             random_state=RANDOM_STATE,
         )
     else:
-        sampler = SMOTE(
-            sampling_strategy=SMOTE_STRATEGY,
-            random_state=RANDOM_STATE,
-        )
+        sampler = SMOTE(sampling_strategy=SMOTE_STRATEGY, random_state=RANDOM_STATE)
 
     X_bal, y_bal = sampler.fit_resample(X_train, y_train)
 
-    # Restore DataFrame column names
-    if not isinstance(X_bal, pd.DataFrame):
-        X_bal = pd.DataFrame(X_bal, columns=X_train.columns)
-    y_bal = np.array(y_bal, dtype=str)
+    X_bal  = pd.DataFrame(X_bal, columns=col_names).astype(float)
+    y_bal  = np.array(y_bal, dtype=str)
 
-    elapsed = time.time() - t0
-    print(f"\n  [SMOTE] Done in {elapsed:.1f}s")
-    print(f"  [SMOTE] Output shape: {X_bal.shape}")
-    print(f"  [SMOTE] Output distribution (should be ~equal):")
+    print(f"\n  [SMOTE] Done in {time.time()-t0:.1f}s  shape={X_bal.shape}")
+    print(f"  [SMOTE] Output distribution:")
     counts = dict(zip(*np.unique(y_bal, return_counts=True)))
     for cls in CORRECT_LABELS:
         n = counts.get(cls, 0)
         print(f"    {cls:<10}: {n:>8,}  ({100*n/len(y_bal):.1f}%)")
 
-    # Cache to disk so next run is instant
-    print(f"\n  [SMOTE] Saving balanced data to cache...")
+    print(f"\n  [SMOTE] Saving to cache...")
     save_pkl(X_bal, BALANCED_X_PATH)
     save_pkl(y_bal, BALANCED_Y_PATH)
     print(f"  [SMOTE] Cached at {BALANCED_X_PATH}")
 
     return X_bal, y_bal
-
 
 # 
 # Probability diagnostics
@@ -250,9 +237,27 @@ def main():
     print(f"  X_val         : {X_val.shape}")
     print(f"  X_test        : {X_test.shape}")
 
-    # ── Apply SMOTE to training only (cached after first run) ──
-    X_train, y_train = load_or_create_balanced_train(X_train_raw, y_train_raw)
-
+    counts = dict(zip(*np.unique(y_train, return_counts=True)))
+    print(f"\n  y_train class distribution (CORRECTED):")
+    for cls in CORRECT_LABELS:
+        n    = counts.get(cls, 0)
+        pct  = 100 * n / len(y_train)
+        smote_ok = ""
+        run_smote = False
+        if cls == "Fatal" and pct < 5:
+            smote_ok = "  ← SMOTE DID NOT RUN — re-run preprocessing!"
+            run_smote = True
+        elif cls == "Fatal" and pct > 30:
+            smote_ok = "  ← SMOTE balanced correctly"
+            run_smote = False
+        print(f"    {cls:<10}: {n:>8,}  ({pct:.1f}%){smote_ok}")
+        
+    if run_smote:
+        # ── Apply SMOTE to training only (cached after first run) ──
+        X_train, y_train = load_or_create_balanced_train(X_train_raw, y_train_raw)
+    else:
+        X_train, y_train = X_train_raw, y_train_raw
+    
     print(f"\n  X_train (balanced): {X_train.shape}")
 
     mlflow.set_experiment("Accident_Severity_Pipeline")

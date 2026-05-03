@@ -52,7 +52,17 @@ EARLY_STOPPING_ROUNDS = 50   # stop if no improvement for N rounds on val set
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 logging.getLogger("catboost").setLevel(logging.WARNING)
 
+_INT_TO_LABEL = {"0": "Slight", "1": "Serious", "2": "Fatal"}
 
+def normalise_labels(y: np.ndarray) -> np.ndarray:
+    y = np.array(y, dtype=str)
+    if set(y).issubset(_INT_TO_LABEL.keys()):
+        print(f"  [INFO] Remapping integers → {_INT_TO_LABEL}")
+        y = np.array([_INT_TO_LABEL[v] for v in y], dtype=str)
+    unknown = set(y) - {"Fatal", "Serious", "Slight"}
+    if unknown:
+        raise ValueError(f"Unexpected labels after remap: {unknown}")
+    return y
 # ── data loading ──────────────────────────────────────────────────────────────
 def load(name: str):
     with open(PROCESSED_DIR / f"{name}.pkl", "rb") as f:
@@ -160,11 +170,11 @@ def main():
 
     # ── load data ──
     X_train = load("X_train")
-    y_train = np.array(load("y_train"), dtype=str)
     X_val   = load("X_val")
-    y_val   = np.array(load("y_val"),   dtype=str)
-    X_test  = load("X_test")
-    y_test  = np.array(load("y_test"),  dtype=str)
+    X_test  = load("X_test")    
+    y_train = normalise_labels(load("y_train"))
+    y_val   = normalise_labels(load("y_val"))
+    y_test  = normalise_labels(load("y_test"))
 
     print(f"\n  X_train: {X_train.shape}  |  X_val: {X_val.shape}  |  X_test: {X_test.shape}")
     print(f"  Train class dist: {dict(zip(*np.unique(y_train, return_counts=True)))}")

@@ -33,7 +33,6 @@ class CatBoostModel:
             min_data_in_leaf=min_data_in_leaf,
             random_seed=random_seed,
             verbose=verbose,
-            auto_class_weights="Balanced",  # handles Fatal imbalance automatically
             eval_metric="TotalF1:average=Macro",  # optimize for what we measure
             loss_function="MultiClass",
         )

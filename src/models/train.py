@@ -1,8 +1,23 @@
 """
-train.py — fixed with defensive label remapping.
+train.py — with corrected label mapping.
 
-If y_train.pkl contains integers (0,1,2) from preprocessing,
-this file auto-detects and remaps them to string labels before training.
+The correct mapping based on empirical class frequencies is:
+  0 → Slight  (86% majority — was wrongly mapped to Fatal)
+  1 → Serious (12%)
+  2 → Fatal   (1.2% minority — was wrongly mapped to Slight)
+
+sklearn LabelEncoder uses alphabetical order on the ORIGINAL string labels.
+If the original Accident_Severity was stored as integers 1/2/3 in STATS19
+(1=Fatal, 2=Serious, 3=Slight), LabelEncoder encodes them as:
+  "1" → 0,  "2" → 1,  "3" → 2
+meaning: 0=Fatal, 1=Serious, 2=Slight  ← this would be CORRECT alphabetically.
+
+BUT the empirical distribution shows 0 has 86% of samples = Slight.
+So either:
+  (a) the original data already had string labels where Slight came first
+      alphabetically, OR
+  (b) the encoding was done on frequency order, not alphabetical.
+Either way, 0=Slight, 1=Serious, 2=Fatal is what the data shows.
 """
 
 import sys
@@ -27,33 +42,36 @@ from models.LightGBM import LGBMModel
 PROCESSED_DIR  = PROJECT_ROOT / "data" / "processed"
 CORRECT_LABELS = ["Fatal", "Serious", "Slight"]
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Label normalisation
+# CORRECTED label mapping — empirically verified from class frequencies:
+#   0 → Slight  (86% of data = majority = Slight)
+#   1 → Serious (12%)
+#   2 → Fatal   (1.2% = minority = Fatal)
 # ─────────────────────────────────────────────────────────────────────────────
-
-# sklearn LabelEncoder uses alphabetical order: Fatal=0, Serious=1, Slight=2
-_INT_TO_LABEL = {"0": "Fatal", "1": "Serious", "2": "Slight"}
+_INT_TO_LABEL = {"0": "Slight", "1": "Serious", "2": "Fatal"}
 
 
 def normalise_labels(y) -> np.ndarray:
-    """
-    Guarantee y contains ['Fatal','Serious','Slight'] strings.
-    Handles: real strings, integers, stringified integers.
-    """
     y = np.array(y, dtype=str)
     unique = set(y)
 
     if unique.issubset(_INT_TO_LABEL.keys()):
-        print(f"  [INFO] y contains encoded integers {unique} → remapping 0=Fatal 1=Serious 2=Slight")
+        print(f"  [INFO] Remapping integers → {_INT_TO_LABEL}")
         y = np.array([_INT_TO_LABEL[v] for v in y], dtype=str)
 
     unknown = set(y) - set(CORRECT_LABELS)
     if unknown:
         raise ValueError(
-            f"Labels still contain unexpected values after normalisation: {unknown}\n"
-            f"Expected {CORRECT_LABELS}. Check _INT_TO_LABEL mapping in train.py."
+            f"Unexpected labels after normalisation: {unknown}\n"
+            f"Expected {CORRECT_LABELS}."
         )
+
+    counts = dict(zip(*np.unique(y, return_counts=True)))
+    # Sanity check: Slight must be majority
+    if counts.get("Slight", 0) < counts.get("Fatal", 0):
+        print("  [WARN] After mapping, Slight is still not the majority class.")
+        print("         Check _INT_TO_LABEL in train.py — mapping may need adjustment.")
+
     return y
 
 
@@ -79,13 +97,14 @@ def print_prob_diagnostics(model, X_val, y_val):
         return
 
     print("\n  ── Probability diagnostics ──")
-    print(f"  {'Class':<10} {'mean':>7} {'p95':>7} {'max':>7}  class_freq")
+    print(f"  {'Class':<10} {'mean':>7} {'p95':>7} {'max':>7}  class_freq  signal?")
     for i, cls in enumerate(CORRECT_LABELS):
         col  = probs[:, i]
         freq = (np.array(y_val) == cls).mean()
-        flag = " ← NO signal (mean≈freq)" if abs(col.mean() - freq) < 0.005 else ""
+        has_signal = abs(col.mean() - freq) > 0.01
+        flag = "YES" if has_signal else "NO — mean≈freq, threshold wont help"
         print(f"  {cls:<10} {col.mean():>7.4f} {np.percentile(col,95):>7.4f} "
-              f"{col.max():>7.4f}  {freq:.4f}{flag}")
+              f"{col.max():>7.4f}  {freq:.4f}      {flag}")
     print()
 
 
@@ -114,9 +133,10 @@ def find_best_thresholds_fast(model, X_val, y_val):
     cls_to_idx = {c: i for i, c in enumerate(CORRECT_LABELS)}
     y_int      = np.array([cls_to_idx[c] for c in y_val], dtype=np.int32)
 
-    fatal_range   = np.arange(0.02, 0.52, 0.05)
-    serious_range = np.arange(0.05, 0.55, 0.05)
-    slight_range  = np.arange(0.10, 0.80, 0.10)
+    # Fatal is column 0, Serious is 1, Slight is 2
+    fatal_range   = np.arange(0.02, 0.52, 0.05)   # 10 values
+    serious_range = np.arange(0.05, 0.55, 0.05)   # 10 values
+    slight_range  = np.arange(0.10, 0.80, 0.10)   #  7 values
 
     best_f1     = 0.0
     best_thresh = np.array([0.33, 0.33, 0.33])
@@ -163,20 +183,28 @@ def main():
     y_val   = normalise_labels(load_split("y_val"))
     y_test  = normalise_labels(load_split("y_test"))
 
-    print(f"  X_train : {X_train.shape}")
+    print(f"\n  X_train : {X_train.shape}")
     print(f"  X_val   : {X_val.shape}")
     print(f"  X_test  : {X_test.shape}")
-    print(f"  y_train : {dict(zip(*np.unique(y_train, return_counts=True)))}")
+
+    counts = dict(zip(*np.unique(y_train, return_counts=True)))
+    print(f"\n  y_train class distribution (CORRECTED):")
+    for cls in CORRECT_LABELS:
+        n    = counts.get(cls, 0)
+        pct  = 100 * n / len(y_train)
+        smote_ok = ""
+        if cls == "Fatal" and pct < 5:
+            smote_ok = "  ← SMOTE DID NOT RUN — re-run preprocessing!"
+        elif cls == "Fatal" and pct > 30:
+            smote_ok = "  ← SMOTE balanced correctly"
+        print(f"    {cls:<10}: {n:>8,}  ({pct:.1f}%){smote_ok}")
 
     mlflow.set_experiment("Accident_Severity_Pipeline")
 
     models = [
-        # ("BaselineModel",BaselineModel(strategy="constant", constant="Slight")),
-        # ("Baseline_stratified",BaselineModel(strategy="stratified"))
-        # ("Baseline_frequent",BaselineModel(strategy="most_frequent"))
-        ("LogReg", LogisticRegressionModel()),
-        ("RF", RandomForestModel()),
-        ("XGB", XGBoostModel()),
+        # ("LogReg",   LogisticRegressionModel()),
+        # ("RF",       RandomForestModel()),
+        ("XGB",      XGBoostModel()),
         ("CatBoost", CatBoostModel()),
         ("LightGBM", LGBMModel()),
     ]

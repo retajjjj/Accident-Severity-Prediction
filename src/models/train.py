@@ -237,11 +237,11 @@ def main():
     print(f"  X_val         : {X_val.shape}")
     print(f"  X_test        : {X_test.shape}")
 
-    counts = dict(zip(*np.unique(y_train, return_counts=True)))
+    counts = dict(zip(*np.unique(y_train_raw, return_counts=True)))
     print(f"\n  y_train class distribution (CORRECTED):")
     for cls in CORRECT_LABELS:
         n    = counts.get(cls, 0)
-        pct  = 100 * n / len(y_train)
+        pct  = 100 * n / len(y_train_raw)
         smote_ok = ""
         run_smote = False
         if cls == "Fatal" and pct < 5:
@@ -252,11 +252,13 @@ def main():
             run_smote = False
         print(f"    {cls:<10}: {n:>8,}  ({pct:.1f}%){smote_ok}")
         
-    if run_smote:
+    if run_smote == True:
         # ── Apply SMOTE to training only (cached after first run) ──
         X_train, y_train = load_or_create_balanced_train(X_train_raw, y_train_raw)
+        print(f"\n  [INFO] SMOTE applied to training data. If this is unexpected, check the class distribution above and re-run preprocessing if needed.")
     else:
         X_train, y_train = X_train_raw, y_train_raw
+        print(f"\n  [SKIP] SMOTE not needed based on class distribution. Using raw training data.")
     
     print(f"\n  X_train (balanced): {X_train.shape}")
 
@@ -266,11 +268,11 @@ def main():
         # ("baseline_constant",BaselineModel(strategy="constant", constant="Slight"))
         # ("baseline_stratified" ,BaselineModel(strategy="stratified"))
         # ("baseline_frequent") ,BaselineModel(strategy="most_frequent")
-        ("LogReg",   LogisticRegressionModel()),
-        ("RF",       RandomForestModel()),
+        #("LogReg",   LogisticRegressionModel()),
+        #("RF",       RandomForestModel()),
         ("XGB",      XGBoostModel()),
-        ("CatBoost", CatBoostModel()),
-        ("LightGBM", LGBMModel()),
+        #("CatBoost", CatBoostModel()),
+        #("LightGBM", LGBMModel()),
     ]
 
     for run_name, model in models:

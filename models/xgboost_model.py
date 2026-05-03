@@ -20,11 +20,11 @@ class XGBoostModel:
     def __init__(
         self,
         n_estimators=500,
-        max_depth=6,
-        learning_rate=0.05,
+        max_depth=10,   
+        learning_rate=0.1,
         subsample=0.8,
         colsample_bytree=0.8,
-        min_child_weight=10,        # key param for imbalance — prevents overfitting to rare Fatal leaves
+        min_child_weight=30,        # key param for imbalance — prevents overfitting to rare Fatal leaves
         gamma=0.5,                  # min loss reduction for a split
         random_state=42,
         eval_metric="mlogloss",

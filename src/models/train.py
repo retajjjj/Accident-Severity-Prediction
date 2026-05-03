@@ -116,8 +116,8 @@ def main():
         # ("BaselineModel",BaselineModel(strategy="constant", constant="Slight")),
         # ("Baseline_stratified",BaselineModel(strategy="stratified"))
         # ("Baseline_frequent",BaselineModel(strategy="most_frequent"))
-        #("LogReg", LogisticRegressionModel()),
-        #("RF", RandomForestModel()),
+        ("LogReg", LogisticRegressionModel()),
+        ("RF", RandomForestModel()),
         ("XGB", XGBoostModel()),
         ("CatBoost", CatBoostModel()),
         ("LightGBM", LGBMModel()),
@@ -131,7 +131,7 @@ def main():
 
         evaluator = Evaluate(X_test, y_test, model, CORRECT_LABELS)
 
-        # 1. BEFORE THRESHOLD
+        
         evaluator.evaluate(run_name)
 
         y_pred_base = model.predict(X_test)
@@ -139,19 +139,19 @@ def main():
 
         base_f1 = f1_score(y_test, y_pred_base, average="macro")
 
-        # 2. FIND THRESHOLDS (VAL ONLY)
+        
         thresholds = find_best_thresholds(model, X_val, y_val, CORRECT_LABELS)
 
         print(f"{run_name} thresholds:", thresholds)
 
-        # 3. APPLY ON TEST
+        
         y_pred_thresh = predict_with_thresholds(
             model, X_test, thresholds, CORRECT_LABELS
         )
 
         thresh_f1 = f1_score(y_test, y_pred_thresh, average="macro")
 
-        # 4. LOG THRESHOLD RUN
+        
         with mlflow.start_run(run_name=run_name + "_thresholded"):
 
             mlflow.log_param("thresholds", thresholds)

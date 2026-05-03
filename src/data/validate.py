@@ -1210,6 +1210,7 @@ def main():
         check_weather_distribution(merged, log_lines, report)     
         check_relationships(acc, log_lines, report)         
         check_join_integrity(acc, veh, log_lines, report)  
+
         save_outputs(log_lines, report)
         return report
 

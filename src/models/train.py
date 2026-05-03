@@ -1,13 +1,21 @@
+"""
+train.py — fixed with defensive label remapping.
+
+If y_train.pkl contains integers (0,1,2) from preprocessing,
+this file auto-detects and remaps them to string labels before training.
+"""
+
 import sys
-from pathlib import Path
+import time
 import pickle
+from pathlib import Path
+
 import numpy as np
 import mlflow
+from sklearn.metrics import f1_score
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
-from sklearn.metrics import f1_score
 
 from models.evaluate import Evaluate
 from models.logistic_regression import LogisticRegressionModel
@@ -15,101 +23,151 @@ from models.random_forest import RandomForestModel
 from models.xgboost_model import XGBoostModel
 from models.catboost_model import CatBoostModel
 from models.LightGBM import LGBMModel
-from models.baseline import BaselineModel
 
-
-PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-
+PROCESSED_DIR  = PROJECT_ROOT / "data" / "processed"
 CORRECT_LABELS = ["Fatal", "Serious", "Slight"]
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Label normalisation
+# ─────────────────────────────────────────────────────────────────────────────
+
+# sklearn LabelEncoder uses alphabetical order: Fatal=0, Serious=1, Slight=2
+_INT_TO_LABEL = {"0": "Fatal", "1": "Serious", "2": "Slight"}
+
+
+def normalise_labels(y) -> np.ndarray:
+    """
+    Guarantee y contains ['Fatal','Serious','Slight'] strings.
+    Handles: real strings, integers, stringified integers.
+    """
+    y = np.array(y, dtype=str)
+    unique = set(y)
+
+    if unique.issubset(_INT_TO_LABEL.keys()):
+        print(f"  [INFO] y contains encoded integers {unique} → remapping 0=Fatal 1=Serious 2=Slight")
+        y = np.array([_INT_TO_LABEL[v] for v in y], dtype=str)
+
+    unknown = set(y) - set(CORRECT_LABELS)
+    if unknown:
+        raise ValueError(
+            f"Labels still contain unexpected values after normalisation: {unknown}\n"
+            f"Expected {CORRECT_LABELS}. Check _INT_TO_LABEL mapping in train.py."
+        )
+    return y
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data loading
+# ─────────────────────────────────────────────────────────────────────────────
 
 def load_split(name: str):
     with open(PROCESSED_DIR / f"{name}.pkl", "rb") as f:
         return pickle.load(f)
 
 
-# Threshold tuning
-def find_best_thresholds(model, X_val, y_val, classes):
-    """
-    Find per-class thresholds that maximize macro F1 on the validation set.
-    Uses margin-based prediction: predict the class furthest above its threshold.
-    """
-    estimator = getattr(model, "model", model)
-    probs = estimator.predict_proba(X_val)  # shape (n, n_classes)
-    classes = list(classes)
+# ─────────────────────────────────────────────────────────────────────────────
+# Probability diagnostics
+# ─────────────────────────────────────────────────────────────────────────────
 
-    best_thresholds = {cls: 0.33 for cls in classes}
-    best_combined_f1 = 0.0
+def print_prob_diagnostics(model, X_val, y_val):
+    try:
+        estimator = getattr(model, "model", model)
+        probs = estimator.predict_proba(X_val)
+    except Exception:
+        print("  [SKIP] predict_proba not available")
+        return
 
-    # Grid search over all class thresholds jointly (coarse grid)
-    # Fatal threshold matters most — search it more finely
-    from itertools import product
-    fatal_range   = np.arange(0.05, 0.50, 0.05)
-    serious_range = np.arange(0.10, 0.60, 0.05)
-    slight_range  = np.arange(0.20, 0.80, 0.10)
-
-    for t_fatal, t_serious, t_slight in product(fatal_range, serious_range, slight_range):
-        t_map = {
-            classes[0]: t_fatal,    # Fatal
-            classes[1]: t_serious,  # Serious
-            classes[2]: t_slight,   # Slight
-        }
-        preds = _apply_margin_thresholds(probs, t_map, classes)
-        f1 = f1_score(y_val, preds, average='macro', zero_division=0)
-        if f1 > best_combined_f1:
-            best_combined_f1 = f1
-            best_thresholds = dict(t_map)
-
-    print(f"Best threshold combo → Fatal={best_thresholds[classes[0]]:.2f}, "
-          f"Serious={best_thresholds[classes[1]]:.2f}, "
-          f"Slight={best_thresholds[classes[2]]:.2f} → macro F1={best_combined_f1:.4f}")
-    return best_thresholds
+    print("\n  ── Probability diagnostics ──")
+    print(f"  {'Class':<10} {'mean':>7} {'p95':>7} {'max':>7}  class_freq")
+    for i, cls in enumerate(CORRECT_LABELS):
+        col  = probs[:, i]
+        freq = (np.array(y_val) == cls).mean()
+        flag = " ← NO signal (mean≈freq)" if abs(col.mean() - freq) < 0.005 else ""
+        print(f"  {cls:<10} {col.mean():>7.4f} {np.percentile(col,95):>7.4f} "
+              f"{col.max():>7.4f}  {freq:.4f}{flag}")
+    print()
 
 
-def _apply_margin_thresholds(probs, thresholds, classes):
-    """
-    For each sample: pick the class with the highest (prob - threshold).
-    If all margins are negative, fall back to argmax.
-    This avoids the Fatal-first priority bug.
-    """
-    classes = list(classes)
-    thresh_array = np.array([thresholds[c] for c in classes])  # shape (n_classes,)
-    margins = probs - thresh_array[np.newaxis, :]               # shape (n_samples, n_classes)
+# ─────────────────────────────────────────────────────────────────────────────
+# Vectorised threshold search
+# ─────────────────────────────────────────────────────────────────────────────
 
-    preds = []
-    for i in range(len(probs)):
-        if margins[i].max() > 0:
-            # At least one class clears its threshold — pick highest margin
-            preds.append(classes[np.argmax(margins[i])])
-        else:
-            # Nothing clears threshold — fall back to argmax probability
-            preds.append(classes[np.argmax(probs[i])])
-
-    return np.array(preds)
+def _vectorised_predict(probs, thresh_array, classes):
+    margins  = probs - thresh_array[np.newaxis, :]
+    best     = np.argmax(margins, axis=1)
+    fallback = np.argmax(probs,   axis=1)
+    has_pos  = margins.max(axis=1) > 0
+    chosen   = np.where(has_pos, best, fallback)
+    return np.array(classes)[chosen]
 
 
-def predict_with_thresholds(model, X, thresholds, classes):
-    estimator = getattr(model, "model", model)
-    probs = estimator.predict_proba(X)
-    return _apply_margin_thresholds(probs, thresholds, list(classes))
+def find_best_thresholds_fast(model, X_val, y_val):
+    try:
+        estimator = getattr(model, "model", model)
+        probs = estimator.predict_proba(X_val)
+    except Exception:
+        print("  [SKIP] No predict_proba")
+        return {c: 0.33 for c in CORRECT_LABELS}
 
-# MAIN
+    y_val      = np.array(y_val, dtype=str)
+    cls_to_idx = {c: i for i, c in enumerate(CORRECT_LABELS)}
+    y_int      = np.array([cls_to_idx[c] for c in y_val], dtype=np.int32)
+
+    fatal_range   = np.arange(0.02, 0.52, 0.05)
+    serious_range = np.arange(0.05, 0.55, 0.05)
+    slight_range  = np.arange(0.10, 0.80, 0.10)
+
+    best_f1     = 0.0
+    best_thresh = np.array([0.33, 0.33, 0.33])
+
+    t0 = time.time()
+    for t_f in fatal_range:
+        for t_s in serious_range:
+            for t_sl in slight_range:
+                thresh   = np.array([t_f, t_s, t_sl])
+                margins  = probs - thresh[np.newaxis, :]
+                best_m   = np.argmax(margins, axis=1)
+                fallback = np.argmax(probs,   axis=1)
+                has_pos  = margins.max(axis=1) > 0
+                chosen   = np.where(has_pos, best_m, fallback).astype(np.int32)
+                f1 = f1_score(y_int, chosen, average="macro", zero_division=0)
+                if f1 > best_f1:
+                    best_f1     = f1
+                    best_thresh = thresh.copy()
+
+    print(f"  Threshold search: {time.time()-t0:.1f}s  "
+          f"Fatal={best_thresh[0]:.2f}  Serious={best_thresh[1]:.2f}  "
+          f"Slight={best_thresh[2]:.2f}  val macro F1={best_f1:.4f}")
+
+    return {CORRECT_LABELS[i]: float(best_thresh[i]) for i in range(3)}
+
+
+def predict_with_thresholds(model, X, thresholds):
+    estimator  = getattr(model, "model", model)
+    probs      = estimator.predict_proba(X)
+    thresh_arr = np.array([thresholds[c] for c in CORRECT_LABELS])
+    return _vectorised_predict(probs, thresh_arr, CORRECT_LABELS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-
     X_train = load_split("X_train")
-    y_train = load_split("y_train")
+    X_val   = load_split("X_val")
+    X_test  = load_split("X_test")
 
-    X_val = load_split("X_val")
-    y_val = load_split("y_val")
+    y_train = normalise_labels(load_split("y_train"))
+    y_val   = normalise_labels(load_split("y_val"))
+    y_test  = normalise_labels(load_split("y_test"))
 
-    X_test = load_split("X_test")
-    y_test = load_split("y_test")
+    print(f"  X_train : {X_train.shape}")
+    print(f"  X_val   : {X_val.shape}")
+    print(f"  X_test  : {X_test.shape}")
+    print(f"  y_train : {dict(zip(*np.unique(y_train, return_counts=True)))}")
 
-    y_train = np.array(y_train, dtype=str)
-    y_val = np.array(y_val, dtype=str)
-    y_test = np.array(y_test, dtype=str)
-    
     mlflow.set_experiment("Accident_Severity_Pipeline")
 
     models = [
@@ -124,44 +182,36 @@ def main():
     ]
 
     for run_name, model in models:
-
-        print(f"\nTraining {run_name}...")
-
+        print(f"\n{'='*55}")
+        print(f"  Training {run_name}...")
+        t0 = time.time()
         model.fit(X_train, y_train)
+        print(f"  Fit: {time.time()-t0:.1f}s")
 
         evaluator = Evaluate(X_test, y_test, model, CORRECT_LABELS)
-
-        
         evaluator.evaluate(run_name)
 
-        y_pred_base = model.predict(X_test)
-        y_pred_base = np.array(y_pred_base, dtype=str)
+        y_pred_base = np.array(model.predict(X_test), dtype=str)
+        base_f1     = f1_score(y_test, y_pred_base, average="macro", zero_division=0)
 
-        base_f1 = f1_score(y_test, y_pred_base, average="macro")
+        print_prob_diagnostics(model, X_val, y_val)
 
-        
-        thresholds = find_best_thresholds(model, X_val, y_val, CORRECT_LABELS)
+        print("  Running threshold search on val set...")
+        thresholds    = find_best_thresholds_fast(model, X_val, y_val)
+        y_pred_thresh = predict_with_thresholds(model, X_test, thresholds)
+        thresh_f1     = f1_score(y_test, y_pred_thresh, average="macro", zero_division=0)
 
-        print(f"{run_name} thresholds:", thresholds)
+        print(f"\n  Macro F1 — base: {base_f1:.4f}  thresholded: {thresh_f1:.4f}"
+              f"  delta={thresh_f1-base_f1:+.4f}")
 
-        
-        y_pred_thresh = predict_with_thresholds(
-            model, X_test, thresholds, CORRECT_LABELS
-        )
-
-        thresh_f1 = f1_score(y_test, y_pred_thresh, average="macro")
-
-        
         with mlflow.start_run(run_name=run_name + "_thresholded"):
-
-            mlflow.log_param("thresholds", thresholds)
+            mlflow.log_params(thresholds)
             mlflow.log_metric("macro_f1_before", base_f1)
-            mlflow.log_metric("macro_f1_after", thresh_f1)
-
+            mlflow.log_metric("macro_f1_after",  thresh_f1)
             evaluator.evaluate(
                 run_name=run_name + "_thresholded",
                 y_pred=y_pred_thresh,
-                log_to_mlflow=False
+                log_to_mlflow=False,
             )
 
 

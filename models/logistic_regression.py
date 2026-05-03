@@ -7,7 +7,7 @@ class LogisticRegressionModel:
             class_weight='balanced',   # ← was missing
             C=C,                       # regularization — tune this
             solver='saga',             # handles large datasets better
-            multi_class='multinomial'
+            # multi_class='multinomial' we commeted it as it give error
         )
 
     def fit(self, X_train, y_train):

@@ -1,23 +1,10 @@
 """
-train.py — with corrected label mapping.
+train.py — applies SMOTETomek directly before training.
 
-The correct mapping based on empirical class frequencies is:
-  0 → Slight  (86% majority — was wrongly mapped to Fatal)
-  1 → Serious (12%)
-  2 → Fatal   (1.2% minority — was wrongly mapped to Slight)
+SMOTETomek result is CACHED to data/processed/X_train_balanced.pkl
+so it only runs once. Delete that file to re-run SMOTE.
 
-sklearn LabelEncoder uses alphabetical order on the ORIGINAL string labels.
-If the original Accident_Severity was stored as integers 1/2/3 in STATS19
-(1=Fatal, 2=Serious, 3=Slight), LabelEncoder encodes them as:
-  "1" → 0,  "2" → 1,  "3" → 2
-meaning: 0=Fatal, 1=Serious, 2=Slight  ← this would be CORRECT alphabetically.
-
-BUT the empirical distribution shows 0 has 86% of samples = Slight.
-So either:
-  (a) the original data already had string labels where Slight came first
-      alphabetically, OR
-  (b) the encoding was done on frequency order, not alphabetical.
-Either way, 0=Slight, 1=Serious, 2=Fatal is what the data shows.
+Do NOT apply SMOTE to X_val or X_test — they must stay as real-world distribution.
 """
 
 import sys
@@ -26,8 +13,11 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import mlflow
 from sklearn.metrics import f1_score
+from imblearn.combine import SMOTETomek
+from imblearn.over_sampling import SMOTE
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -42,51 +32,128 @@ from models.LightGBM import LGBMModel
 PROCESSED_DIR  = PROJECT_ROOT / "data" / "processed"
 CORRECT_LABELS = ["Fatal", "Serious", "Slight"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORRECTED label mapping — empirically verified from class frequencies:
-#   0 → Slight  (86% of data = majority = Slight)
-#   1 → Serious (12%)
-#   2 → Fatal   (1.2% = minority = Fatal)
-# ─────────────────────────────────────────────────────────────────────────────
+BALANCED_X_PATH = PROCESSED_DIR / "X_train_balanced.pkl"
+BALANCED_Y_PATH = PROCESSED_DIR / "y_train_balanced.pkl"
+
+# ── SMOTE strategy ────────────────────────────────────────────────────────────
+USE_SMOTE_TOMEK = True    # True = SMOTETomek (better),  False = vanilla SMOTE
+# In train.py, replace SMOTE_STRATEGY = "auto" with:
+SMOTE_STRATEGY = {
+    "Fatal":   150_000,   # 10K  → 150K  (15x — meaningful signal without drowning in noise)
+    "Serious": 450_000,   # 107K → 450K  (4x  — moderate boost)
+}
+RANDOM_STATE    = 42
+
+
+# 
+# Label normalisation
+# 
+
 _INT_TO_LABEL = {"0": "Slight", "1": "Serious", "2": "Fatal"}
 
 
 def normalise_labels(y) -> np.ndarray:
+    """Convert integer-encoded labels to string labels. Auto-detects encoding."""
     y = np.array(y, dtype=str)
-    unique = set(y)
-
-    if unique.issubset(_INT_TO_LABEL.keys()):
+    if set(y).issubset(_INT_TO_LABEL.keys()):
         print(f"  [INFO] Remapping integers → {_INT_TO_LABEL}")
         y = np.array([_INT_TO_LABEL[v] for v in y], dtype=str)
-
     unknown = set(y) - set(CORRECT_LABELS)
     if unknown:
-        raise ValueError(
-            f"Unexpected labels after normalisation: {unknown}\n"
-            f"Expected {CORRECT_LABELS}."
-        )
-
-    counts = dict(zip(*np.unique(y, return_counts=True)))
-    # Sanity check: Slight must be majority
-    if counts.get("Slight", 0) < counts.get("Fatal", 0):
-        print("  [WARN] After mapping, Slight is still not the majority class.")
-        print("         Check _INT_TO_LABEL in train.py — mapping may need adjustment.")
-
+        raise ValueError(f"Unexpected labels: {unknown}. Expected {CORRECT_LABELS}.")
     return y
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Data loading
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def load_split(name: str):
     with open(PROCESSED_DIR / f"{name}.pkl", "rb") as f:
         return pickle.load(f)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+def save_pkl(obj, path: Path):
+    with open(path, "wb") as f:
+        pickle.dump(obj, f)
+
+
+# 
+# SMOTE — cached
+# 
+
+def load_or_create_balanced_train(X_train, y_train):
+    """
+    Load cached balanced training data if it exists.
+    Otherwise run SMOTETomek (or SMOTE), save to cache, return balanced data.
+
+    SMOTE is ONLY applied to training data — never val or test.
+
+    To force re-run: delete data/processed/X_train_balanced.pkl
+    """
+    if BALANCED_X_PATH.exists() and BALANCED_Y_PATH.exists():
+        print("  [SMOTE] Loading cached balanced training data...")
+        t0 = time.time()
+        X_bal = load_split("X_train_balanced")
+        y_bal = np.array(load_split("y_train_balanced"), dtype=str)
+        print(f"  [SMOTE] Loaded in {time.time()-t0:.1f}s  shape={X_bal.shape}")
+        counts = dict(zip(*np.unique(y_bal, return_counts=True)))
+        print(f"  [SMOTE] Cached distribution: { {c: counts.get(c,0) for c in CORRECT_LABELS} }")
+        return X_bal, y_bal
+
+    # Convert to DataFrame if needed (SMOTE requires it for column names)
+    if not isinstance(X_train, pd.DataFrame):
+        X_train = pd.DataFrame(X_train)
+
+    print(f"\n  [SMOTE] Running {'SMOTETomek' if USE_SMOTE_TOMEK else 'SMOTE'}...")
+    print(f"  [SMOTE] Input shape: {X_train.shape}")
+    print(f"  [SMOTE] Strategy: {SMOTE_STRATEGY}  (balances all classes to specified strategy)")
+    print(f"  [SMOTE] Input distribution:")
+    for cls in CORRECT_LABELS:
+        n = (y_train == cls).sum()
+        print(f"    {cls:<10}: {n:>8,}  ({100*n/len(y_train):.1f}%)")
+
+    t0 = time.time()
+
+    if USE_SMOTE_TOMEK:
+        sampler = SMOTETomek(
+            smote=SMOTE(sampling_strategy=SMOTE_STRATEGY, random_state=RANDOM_STATE),
+            random_state=RANDOM_STATE,
+        )
+    else:
+        sampler = SMOTE(
+            sampling_strategy=SMOTE_STRATEGY,
+            random_state=RANDOM_STATE,
+        )
+
+    X_bal, y_bal = sampler.fit_resample(X_train, y_train)
+
+    # Restore DataFrame column names
+    if not isinstance(X_bal, pd.DataFrame):
+        X_bal = pd.DataFrame(X_bal, columns=X_train.columns)
+    y_bal = np.array(y_bal, dtype=str)
+
+    elapsed = time.time() - t0
+    print(f"\n  [SMOTE] Done in {elapsed:.1f}s")
+    print(f"  [SMOTE] Output shape: {X_bal.shape}")
+    print(f"  [SMOTE] Output distribution (should be ~equal):")
+    counts = dict(zip(*np.unique(y_bal, return_counts=True)))
+    for cls in CORRECT_LABELS:
+        n = counts.get(cls, 0)
+        print(f"    {cls:<10}: {n:>8,}  ({100*n/len(y_bal):.1f}%)")
+
+    # Cache to disk so next run is instant
+    print(f"\n  [SMOTE] Saving balanced data to cache...")
+    save_pkl(X_bal, BALANCED_X_PATH)
+    save_pkl(y_bal, BALANCED_Y_PATH)
+    print(f"  [SMOTE] Cached at {BALANCED_X_PATH}")
+
+    return X_bal, y_bal
+
+
+# 
 # Probability diagnostics
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def print_prob_diagnostics(model, X_val, y_val):
     try:
@@ -101,21 +168,17 @@ def print_prob_diagnostics(model, X_val, y_val):
     for i, cls in enumerate(CORRECT_LABELS):
         col  = probs[:, i]
         freq = (np.array(y_val) == cls).mean()
-        has_signal = abs(col.mean() - freq) > 0.01
-        flag = "YES" if has_signal else "NO — mean≈freq, threshold wont help"
+        flag = "YES" if abs(col.mean() - freq) > 0.01 else "NO — mean≈freq"
         print(f"  {cls:<10} {col.mean():>7.4f} {np.percentile(col,95):>7.4f} "
-              f"{col.max():>7.4f}  {freq:.4f}      {flag}")
+            f"{col.max():>7.4f}  {freq:.4f}      {flag}")
     print()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Vectorised threshold search
-# ─────────────────────────────────────────────────────────────────────────────
-
+# 
 def _vectorised_predict(probs, thresh_array, classes):
     margins  = probs - thresh_array[np.newaxis, :]
     best     = np.argmax(margins, axis=1)
-    fallback = np.argmax(probs,   axis=1)
+    fallback = np.argmax(probs, axis=1)
     has_pos  = margins.max(axis=1) > 0
     chosen   = np.where(has_pos, best, fallback)
     return np.array(classes)[chosen]
@@ -133,10 +196,9 @@ def find_best_thresholds_fast(model, X_val, y_val):
     cls_to_idx = {c: i for i, c in enumerate(CORRECT_LABELS)}
     y_int      = np.array([cls_to_idx[c] for c in y_val], dtype=np.int32)
 
-    # Fatal is column 0, Serious is 1, Slight is 2
-    fatal_range   = np.arange(0.02, 0.52, 0.05)   # 10 values
-    serious_range = np.arange(0.05, 0.55, 0.05)   # 10 values
-    slight_range  = np.arange(0.10, 0.80, 0.10)   #  7 values
+    fatal_range   = np.arange(0.02, 0.52, 0.05)
+    serious_range = np.arange(0.05, 0.55, 0.05)
+    slight_range  = np.arange(0.10, 0.80, 0.10)
 
     best_f1     = 0.0
     best_thresh = np.array([0.33, 0.33, 0.33])
@@ -148,7 +210,7 @@ def find_best_thresholds_fast(model, X_val, y_val):
                 thresh   = np.array([t_f, t_s, t_sl])
                 margins  = probs - thresh[np.newaxis, :]
                 best_m   = np.argmax(margins, axis=1)
-                fallback = np.argmax(probs,   axis=1)
+                fallback = np.argmax(probs, axis=1)
                 has_pos  = margins.max(axis=1) > 0
                 chosen   = np.where(has_pos, best_m, fallback).astype(np.int32)
                 f1 = f1_score(y_int, chosen, average="macro", zero_division=0)
@@ -170,40 +232,37 @@ def predict_with_thresholds(model, X, thresholds):
     return _vectorised_predict(probs, thresh_arr, CORRECT_LABELS)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Main
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def main():
-    X_train = load_split("X_train")
-    X_val   = load_split("X_val")
-    X_test  = load_split("X_test")
+    # ── Load raw splits ──
+    X_train_raw = load_split("X_train")
+    X_val       = load_split("X_val")
+    X_test      = load_split("X_test")
 
-    y_train = normalise_labels(load_split("y_train"))
-    y_val   = normalise_labels(load_split("y_val"))
-    y_test  = normalise_labels(load_split("y_test"))
+    y_train_raw = normalise_labels(load_split("y_train"))
+    y_val       = normalise_labels(load_split("y_val"))
+    y_test      = normalise_labels(load_split("y_test"))
 
-    print(f"\n  X_train : {X_train.shape}")
-    print(f"  X_val   : {X_val.shape}")
-    print(f"  X_test  : {X_test.shape}")
+    print(f"\n  X_train (raw) : {X_train_raw.shape}")
+    print(f"  X_val         : {X_val.shape}")
+    print(f"  X_test        : {X_test.shape}")
 
-    counts = dict(zip(*np.unique(y_train, return_counts=True)))
-    print(f"\n  y_train class distribution (CORRECTED):")
-    for cls in CORRECT_LABELS:
-        n    = counts.get(cls, 0)
-        pct  = 100 * n / len(y_train)
-        smote_ok = ""
-        if cls == "Fatal" and pct < 5:
-            smote_ok = "  ← SMOTE DID NOT RUN — re-run preprocessing!"
-        elif cls == "Fatal" and pct > 30:
-            smote_ok = "  ← SMOTE balanced correctly"
-        print(f"    {cls:<10}: {n:>8,}  ({pct:.1f}%){smote_ok}")
+    # ── Apply SMOTE to training only (cached after first run) ──
+    X_train, y_train = load_or_create_balanced_train(X_train_raw, y_train_raw)
+
+    print(f"\n  X_train (balanced): {X_train.shape}")
 
     mlflow.set_experiment("Accident_Severity_Pipeline")
 
     models = [
-        # ("LogReg",   LogisticRegressionModel()),
-        # ("RF",       RandomForestModel()),
+        # ("baseline_constant",BaselineModel(strategy="constant", constant="Slight"))
+        # ("baseline_stratified" ,BaselineModel(strategy="stratified"))
+        # ("baseline_frequent") ,BaselineModel(strategy="most_frequent")
+        ("LogReg",   LogisticRegressionModel()),
+        ("RF",       RandomForestModel()),
         ("XGB",      XGBoostModel()),
         ("CatBoost", CatBoostModel()),
         ("LightGBM", LGBMModel()),

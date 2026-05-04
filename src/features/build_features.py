@@ -30,6 +30,8 @@ from sklearn.linear_model import LogisticRegression
 from scipy.stats import spearmanr
 from typing import Tuple, List
 from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+from imblearn.under_sampling import TomekLinks
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,10 @@ def encode_target_variable(df: pd.DataFrame) -> pd.DataFrame:
         if not pd.api.types.is_numeric_dtype(df['Accident_Severity']):
             severity_map = {'Slight': 0, 'Serious': 1, 'Fatal': 2}
             df['Accident_Severity'] = df['Accident_Severity'].map(severity_map)
+            # Handle NaN values before converting to int
+            if df['Accident_Severity'].isna().any():
+                logger.warning("NaN values found in Accident_Severity, dropping rows with NaN")
+                df = df.dropna(subset=['Accident_Severity'])
             # Ensure numeric dtype
             df['Accident_Severity'] = df['Accident_Severity'].astype('int64')
             logger.info("✓ Target variable (Accident_Severity) encoded: Slight=0, Serious=1, Fatal=2")
@@ -83,6 +89,11 @@ def create_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with temporal features added
     """
     df = df.copy()
+    
+    # Skip if Date column is missing
+    if 'Date' not in df.columns:
+        logger.warning("Date column not found, temporal features skipped")
+        return df
     
     # Ensure Date is datetime
     if not pd.api.types.is_datetime64_any_dtype(df['Date']):
@@ -354,6 +365,11 @@ def create_road_risk_features(df: pd.DataFrame) -> pd.DataFrame:
     # Skip if Speed_limit not available (some datasets may not have it)
     if 'Speed_limit' not in df.columns:
         logger.info("⚠ Speed_limit column not found - skipping road_risk_score")
+        return df
+    
+    # Skip if Road_Type not available
+    if 'Road_Type' not in df.columns:
+        logger.info("⚠ Road_Type column not found - skipping road_risk_score")
         return df
     
     # Base score from speed limit
@@ -794,8 +810,15 @@ def create_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     
     # Speed × Road Risk interaction
+    # Note: Road_Type is a string, so we need to map it to numeric first
     if 'Speed_limit' in df.columns and 'Road_Type' in df.columns:
-        df['speed_x_road_risk'] = (df['Speed_limit'] * df['Road_Type']).astype(int)
+        # Create numeric mapping for Road_Type if not already present
+        road_type_mult = {'Single carriageway': 1.0, 'Dual carriageway': 1.5, 'Roundabout': 0.8}
+        road_mult = df['Road_Type'].fillna('Single carriageway').map(road_type_mult).fillna(1.0)
+        
+        # Speed is numeric, road_mult is numeric
+        speed_vals = pd.to_numeric(df['Speed_limit'], errors='coerce').fillna(0)
+        df['speed_x_road_risk'] = (speed_vals * road_mult).fillna(0).astype(int)
         logger.debug("✓ speed_x_road_risk created")
     
     # Wet road + high speed interaction
@@ -1159,6 +1182,41 @@ def apply_smote(X_train: pd.DataFrame,
     logger.info(f"  Class distribution after SMOTE:\n{pd.Series(y_train_balanced).value_counts()}")
     
     return pd.DataFrame(X_train_balanced, columns=X_train.columns), pd.Series(y_train_balanced)
+
+
+def apply_smote_tomek(X_train: pd.DataFrame,
+                      y_train: pd.Series,
+                      sampling_strategy: str = 'auto',
+                      random_state: int = 42) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Apply SMOTE combined with Tomek links (oversampling + undersampling).
+    
+    This combines SMOTE oversampling with Tomek link undersampling to balance
+    the training data while removing noisy samples at class boundaries.
+    
+    Args:
+        X_train: Training features
+        y_train: Training target
+        sampling_strategy: Sampling strategy for SMOTE (see imbalanced-learn docs)
+        random_state: Random seed
+    
+    Returns:
+        (X_train_balanced, y_train_balanced)
+    """
+    smote = SMOTE(sampling_strategy=sampling_strategy, random_state=random_state)
+    tomek = TomekLinks(sampling_strategy='all')
+    
+    # Apply SMOTE then Tomek
+    X_smote, y_smote = smote.fit_resample(X_train, y_train)
+    X_balanced = pd.DataFrame(X_smote, columns=X_train.columns)
+    y_balanced = pd.Series(y_smote)
+    
+    X_balanced, y_balanced = tomek.fit_resample(X_balanced, y_balanced)
+    
+    logger.info(f"✓ SMOTE+Tomek applied. Original shape: {X_train.shape} → Balanced: {X_balanced.shape}")
+    logger.info(f"  Class distribution after SMOTE+Tomek:\n{pd.Series(y_balanced).value_counts()}")
+    
+    return pd.DataFrame(X_balanced, columns=X_train.columns), pd.Series(y_balanced)
 
 
 def select_features_rfecv(X: pd.DataFrame, 

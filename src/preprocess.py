@@ -112,10 +112,10 @@ CONFIG = {
     'test_size': 0.2,
     'random_state': 42,
     'missing_threshold': 50.0,
-    'feature_selection_method': 'rfecv',  # Primary method: 'rfecv' or 'model_based'
+    'feature_selection_method': 'model_based',  # Primary method: 'rfecv' or 'model_based'
     'rfecv_min_features': 15,  # Minimum features for RFECV (requirement: ≥7)
     'rfecv_cv_folds': 5,  # Cross-validation folds for RFECV
-    'compare_feature_selection': True,  # If True, run both RFECV and Random Forest for comparison
+    'compare_feature_selection': False,  # If True, run both RFECV and Random Forest for comparison
     'apply_smote': True,
     'smote_sampling_strategy': 'not majority',
 }
@@ -656,7 +656,7 @@ def select_features(X: pd.DataFrame,
     if run_comparison:
         logger.info(f"Primary method for train/val/test split: {CONFIG.get('feature_selection_method', 'rfecv').upper()}\n")
     else:
-        logger.info()
+        logger.info("")  # Empty line for readability
     
     results = {}
     

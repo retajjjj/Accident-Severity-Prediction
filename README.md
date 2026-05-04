@@ -1,24 +1,113 @@
 # Accident Severity Prediction
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+## Team Members
 
-A comprehensive machine learning project for predicting accident severity using data science best practices. This project implements a complete data pipeline from raw data acquisition to model training and evaluation, with extensive testing and validation.
+1. Manar Farghaly - 1210390
+2. Salma Nasser - 1210238  
+3. Retag Mohamed - 1220124
+4. Danah Hassan - 1210221
 
-## Live API Deployment Attempt
+## Project Description
 
-**Public Endpoint:** [Deployed on Railway](https://accident-severity-prediction.up.railway.app)
+A comprehensive machine learning project for predicting accident severity using data science best practices. This project implements a complete data pipeline from raw data acquisition to model training and evaluation, with extensive testing and validation. The system analyzes various factors including road conditions, weather, time of day, and vehicle characteristics to predict the severity level of traffic accidents (Fatal, Serious, or Slight).
 
-### API Usage
+## Setup and Run Instructions
 
-**Health Check:**
+### Prerequisites
+- Python 3.11+
+- Poetry (dependency management)
+- Git
+
+### Installation
+
+1. **Clone the repository:**
 ```bash
-curl https://accident-severity-prediction.up.railway.app/health
+git clone https://github.com/danahhassan/accident-severity-prediction.git
+cd accident-severity-prediction
 ```
 
-**Predict Accident Severity:**
+2. **Install dependencies using Poetry:**
 ```bash
+poetry install
+```
+
+3. **Activate the virtual environment:**
+```bash
+poetry shell
+```
+
+### Running the Project
+
+#### **Run All Tests**
+```bash
+make test-all
+```
+
+#### **Run Specific Test Categories**
+```bash
+# Unit tests only
+make test-unit
+
+# Integration tests only  
+make test-integration
+
+# Performance tests only
+make test-performance
+```
+
+#### **Generate Coverage Report**
+```bash
+make coverage
+```
+
+#### **Run Individual Components**
+```bash
+# Data preprocessing
+python -m src.data.preprocess
+
+# Feature engineering
+python -m src.features.build_features
+
+# Model training
+python -m src.models.train
+
+# Model evaluation
+python -m src.models.evaluate
+```
+
+#### **Run API Server (for deployment)**
+```bash
+python -m src.api.main
+```
+
+## API Deployment Attempt
+
+### Deployment Overview
+An attempt was made to deploy the Accident Severity Prediction model as a public API endpoint using Railway cloud platform.
+
+### Technical Implementation
+- **Framework:** FastAPI with Uvicorn server
+- **Containerization:** Docker with Python 3.11-slim base image
+- **Dependencies:** Pip-based installation (switched from Poetry due to build issues)
+- **Endpoint:** `https://accident-severity-prediction.up.railway.app`
+
+### API Structure
+```
+GET  /health          - Health check endpoint
+POST /predict         - Accident severity prediction
+```
+
+### Build Issues Encountered
+1. **Poetry Configuration Error:** Initial Docker build failed with Poetry virtualenv configuration
+2. **Solution:** Switched to direct pip installation in Dockerfile
+3. **Status:** Docker configuration updated, ready for redeployment
+
+### Sample API Usage
+```bash
+# Health check
+curl https://accident-severity-prediction.up.railway.app/health
+
+# Prediction request
 curl -X POST https://accident-severity-prediction.up.railway.app/predict \
   -H "Content-Type: application/json" \
   -d '{
@@ -33,18 +122,17 @@ curl -X POST https://accident-severity-prediction.up.railway.app/predict \
   }'
 ```
 
-**Response:**
-```json
-{
-  "prediction": "Slight",
-  "probabilities": {
-    "Fatal": 0.02,
-    "Serious": 0.15,
-    "Slight": 0.83
-  },
-  "confidence": 0.83
-}
-```
+### Deployment Files Created
+- `src/api/main.py` - FastAPI application
+- `Dockerfile` - Container configuration
+- `.dockerignore` - Docker build exclusions
+- Updated `pyproject.toml` with web dependencies
+
+### Next Steps for Deployment
+1. Push updated Dockerfile to GitHub
+2. Trigger new Railway build
+3. Test API endpoints
+4. Monitor deployment logs
 
 ## Project Status
 

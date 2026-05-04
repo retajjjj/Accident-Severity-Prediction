@@ -74,6 +74,7 @@ from features import (
         select_features_rfecv,
         select_features_model_based,
         apply_smote,
+        apply_smote_tomek,
     )
 
 
@@ -572,6 +573,8 @@ def preprocess_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, dict]:
     
     metadata = {}
     
+    
+    
     # Handle missing values
     logger.info("Handling missing values...")
     logger.info(f"Before handle_missing_values: Accident_Severity classes={df['Accident_Severity'].unique()}")
@@ -849,7 +852,9 @@ def prepare_train_val_test_split(df: pd.DataFrame,
     logger.info("Class distribution BEFORE SMOTE:\n")
     logger.info("Training set:")
     logger.info(y_train.value_counts().to_string())
-    
+
+
+
     # Apply SMOTE to training data ONLY
     if CONFIG['apply_smote']:
         logger.info(f"\n✓ Applying SMOTE to training split only...")
@@ -858,6 +863,7 @@ def prepare_train_val_test_split(df: pd.DataFrame,
             sampling_strategy=CONFIG['smote_sampling_strategy'],
             random_state=CONFIG['random_state']
         )
+        #X_train, y_train = apply_smote_tomek(X_train, y_train, random_state=CONFIG['random_state'])
     
     # Scale features (fit on training data, apply to all)
     logger.info(f"\n✓ Fitting scaler on training data...")

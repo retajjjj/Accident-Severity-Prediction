@@ -1135,6 +1135,7 @@ def select_features_model_based(X: pd.DataFrame,
     return selected_features, importance_scores
 
 
+
 def apply_smote(X_train: pd.DataFrame, 
                y_train: pd.Series,
                sampling_strategy: str = 'not majority',

@@ -1,6 +1,6 @@
 =================================================================
   UK Road Accidents — Data Validation Report
-  2026-04-21 00:24:11
+  2026-04-29 19:51:42
 =================================================================
 
 Loaded accidents : 2,047,256 rows x 34 columns
@@ -274,4 +274,4 @@ JOIN INTEGRITY  (Accident_Index key across both tables)
     [JOIN_INTEGRITY] 657,532 accidents (32.1%) have no vehicle record — dropped on inner join, document in cleaning step
     [JOIN_INTEGRITY] 99,257 vehicle records (6.7%) have no matching accident — orphaned records, dropped on inner join
 
-  [SAVED] C:\Users\danah\Downloads\Data Science CMPS344\Project\Accident-Severity-Prediction\reports\validation_report.json
+  [SAVED] /Users/manarfarghaly/Desktop/Data/senior2firstterm/datascience/AccidentSeverity/Accident-Severity-Prediction/src/reports/validation_report.json

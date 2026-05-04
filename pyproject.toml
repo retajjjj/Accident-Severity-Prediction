@@ -10,6 +10,7 @@ authors = [
   { name = "team 7" },
 ]
 
+
 readme = "README.md"
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -24,6 +24,14 @@ Every model is assessed on the same held-out test split using:
 All runs are tracked in MLflow under the experiment `Accident_Severity_Pipeline`.  
 Run: `poetry run mlflow ui --backend-store-uri file:./mlruns`
 
+For rubric compliance, the MLflow comparison view should show at least these columns side by side for every run:
+
+- `params.model_name`
+- standard metrics: `accuracy`, `macro_f1` (and `weighted_f1` if desired)
+- business metrics: `fatal_recall_business`, `serious_recall_business`, `critical_case_recall`, `critical_undertriage_rate`
+
+The final report should include a screenshot of that MLflow experiment comparison table with all required runs visible.
+
 ---
 
 ## Models
@@ -130,6 +138,9 @@ Run: `poetry run mlflow ui --backend-store-uri file:./mlruns`
 
 Each MLflow run stores:
 
+- `params/model_name` and the estimator hyperparameters used for that run
+- standard metrics including `accuracy`, `macro_f1`, and `weighted_f1`
+- business metrics including `fatal_recall_business`, `serious_recall_business`, `critical_case_recall`, and `critical_undertriage_rate`
 - `plots/<run>_confusion_matrix.png` — visual confusion matrix
 - `reports/<run>_classification_report.json` — full per-class metrics as JSON
 - `model/` — the fitted sklearn estimator (loadable via `mlflow.sklearn.load_model`)

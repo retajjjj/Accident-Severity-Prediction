@@ -176,3 +176,21 @@ make coverage
 ```
 
 ---
+
+## Stakeholder Dashboard
+
+An interactive Streamlit dashboard is available at `streamlit_app.py`. It presents:
+
+- EDA findings and data-readiness checks
+- Model performance comparisons across the trained classifiers
+- Business-facing insights focused on severe-case capture and operational risk
+
+Run it with:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The dashboard reads directly from the existing artifacts in `reports/` and `data/processed/`, so no retraining is required to present the current project results.
+
+---

@@ -8,76 +8,36 @@ _get_estimator() is used only for logging hyperparameters to MLflow.
 """
 
 import json
+import pickle
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
 import mlflow
+import mlflow.sklearn
+import mlflow.xgboost
+import mlflow.lightgbm
 import numpy as np
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
     classification_report,
-    confusion_matrix,
     f1_score,
 )
 
 ARTIFACTS_DIR  = Path("reports") / "mlflow_artifacts"
 CORRECT_LABELS = ["Fatal", "Serious", "Slight"]
 
-# Business-metric cost matrix: cost[true][predicted].
-# Fatal predicted as Slight is the worst error (value 100).
-# Slight predicted as Fatal wastes resources but risks no lives (value 2).
+# Business-metric cost matrix: cost[true_label][predicted_label].
+# Fatal predicted as Slight is the worst possible error (value 100) —
+# a real fatality is treated as a minor incident.
+# Slight predicted as Fatal wastes emergency resources but costs no lives (value 2).
 _MISCLASSIFICATION_COST = {
-    "Fatal":   {"Fatal": 0, "Serious": 20,  "Slight": 100},
-    "Serious": {"Fatal": 5, "Serious": 0,   "Slight": 15},
-    "Slight":  {"Fatal": 2, "Serious": 1,   "Slight": 0},
+    "Fatal":   {"Fatal": 0, "Serious": 20, "Slight": 100},
+    "Serious": {"Fatal": 5, "Serious": 0,  "Slight": 15},
+    "Slight":  {"Fatal": 2, "Serious": 1,  "Slight": 0},
 }
-
-def _compute_business_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
-    """Business-facing metrics focused on high-severity case capture."""
-    critical_mask = np.isin(y_true, ["Fatal", "Serious"])
-    slight_predictions = y_pred == "Slight"
-    undertriaged_critical = critical_mask & slight_predictions
-
-    fatal_mask = y_true == "Fatal"
-    serious_mask = y_true == "Serious"
-
-    return {
-        "fatal_recall_business": float((y_pred[fatal_mask] == "Fatal").mean()) if fatal_mask.any() else 0.0,
-        "serious_recall_business": float((y_pred[serious_mask] == "Serious").mean()) if serious_mask.any() else 0.0,
-        "critical_case_recall": float((y_pred[critical_mask] != "Slight").mean()) if critical_mask.any() else 0.0,
-        "critical_undertriage_rate": float(undertriaged_critical.mean()) if critical_mask.any() else 0.0,
-    }
-
-
-def _log_model_artifact(model, estimator, run_name: str) -> None:
-    """Persist the fitted estimator as an MLflow artifact when possible."""
-    if isinstance(estimator, MagicMock):
-        return
-
-    try:
-        mlflow.sklearn.log_model(estimator, artifact_path="model")
-        return
-    except Exception:
-        pass
-
-    model_path = ARTIFACTS_DIR / f"{run_name.lower().replace(' ', '_')}_model.pkl"
-    try:
-        import pickle
-
-        with open(model_path, "wb") as file_obj:
-            pickle.dump(model, file_obj)
-        mlflow.log_artifact(str(model_path), artifact_path="model")
-    except Exception:
-        pass
-
-
-@contextmanager
-def _nullcontext():
-    """No-op context manager for log_to_mlflow=False branches."""
-    yield
 
 
 class Evaluate:
@@ -88,7 +48,7 @@ class Evaluate:
     ----------
     X_test      : Feature matrix for the held-out test set.
     y_test      : True labels (string or int-encoded; converted to str internally).
-    model       : Trained model wrapper exposing a `predict()` method.
+    model       : Trained model wrapper exposing a predict() method.
     class_names : Ordered list of class labels. Defaults to CORRECT_LABELS.
     """
 
@@ -103,16 +63,15 @@ class Evaluate:
             )
         if not hasattr(model, "predict"):
             raise ValueError("model must expose a predict() method.")
-
         if class_names is not None:
             if len(class_names) == 0:
                 raise ValueError("class_names must not be empty.")
             if len(class_names) != len(set(class_names)):
                 raise ValueError("class_names must be unique.")
 
-        self.X_test     = X_test
-        self.y_test     = np.array(y_test, dtype=str)
-        self.model      = model
+        self.X_test      = X_test
+        self.y_test      = np.array(y_test, dtype=str)
+        self.model       = model
         self.class_names = list(class_names) if class_names is not None else CORRECT_LABELS
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -120,7 +79,7 @@ class Evaluate:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _get_estimator(self):
-        """Return the inner sklearn estimator (for hyperparameter logging only)."""
+        """Return the inner sklearn estimator (used for hyperparameter logging only)."""
         inner = getattr(self.model, "model", None)
         return inner if inner is not None else self.model
 
@@ -129,36 +88,78 @@ class Evaluate:
         """
         Compute road-safety business metrics from predictions.
 
-        fatal_miss_rate   : P(predicted = Slight | true = Fatal).
-                            Real fatalities classified as minor — the costliest error.
-        false_fatal_rate  : P(predicted = Fatal  | true = Slight).
-                            Minor incidents over-escalated — wastes emergency resources.
-        weighted_cost     : Mean misclassification cost per sample using
-                            _MISCLASSIFICATION_COST. Lower is better.
+        fatal_recall_business     : Of all fatal accidents, fraction correctly identified.
+        serious_recall_business   : Of all serious accidents, fraction correctly identified.
+        critical_case_recall      : Of all Fatal+Serious cases, fraction not downgraded to Slight.
+                                    Measures the pipeline's ability to flag high-risk incidents.
+        critical_undertriage_rate : Fraction of Fatal+Serious cases wrongly predicted as Slight.
+                                    Primary safety KPI — must be driven as close to 0 as possible.
+        weighted_cost             : Mean misclassification cost per sample via _MISCLASSIFICATION_COST.
+                                    Converts all error types into a single comparable number.
+                                    Lower is better.
         """
-        n_fatal = (y_true == "Fatal").sum()
-        n_slight = (y_true == "Slight").sum()
+        fatal_mask    = y_true == "Fatal"
+        serious_mask  = y_true == "Serious"
+        critical_mask = fatal_mask | serious_mask
 
-        fatal_miss_rate = (
-            ((y_true == "Fatal") & (y_pred == "Slight")).sum() / n_fatal
-            if n_fatal > 0 else 0.0
+        fatal_recall = (
+            float((y_pred[fatal_mask] == "Fatal").mean()) if fatal_mask.any() else 0.0
         )
-        false_fatal_rate = (
-            ((y_true == "Slight") & (y_pred == "Fatal")).sum() / n_slight
-            if n_slight > 0 else 0.0
+        serious_recall = (
+            float((y_pred[serious_mask] == "Serious").mean()) if serious_mask.any() else 0.0
+        )
+        critical_recall = (
+            float((y_pred[critical_mask] != "Slight").mean()) if critical_mask.any() else 0.0
+        )
+        undertriage_rate = (
+            float((y_pred[critical_mask] == "Slight").mean()) if critical_mask.any() else 0.0
         )
 
         total_cost = sum(
-            _MISCLASSIFICATION_COST.get(true, {}).get(pred, 0)
-            for true, pred in zip(y_true, y_pred)
+            _MISCLASSIFICATION_COST.get(t, {}).get(p, 0)
+            for t, p in zip(y_true, y_pred)
         )
-        weighted_cost = total_cost / len(y_true)
+        weighted_cost = float(total_cost / len(y_true))
 
         return {
-            "fatal_miss_rate":  float(fatal_miss_rate),
-            "false_fatal_rate": float(false_fatal_rate),
-            "weighted_cost":    float(weighted_cost),
+            "fatal_recall_business":     fatal_recall,
+            "serious_recall_business":   serious_recall,
+            "critical_case_recall":      critical_recall,
+            "critical_undertriage_rate": undertriage_rate,
+            "weighted_cost":             weighted_cost,
         }
+
+    def _log_model_artifact(self, estimator, run_name: str) -> None:
+        """
+        Persist the fitted estimator as an MLflow model artifact.
+
+        Dispatches to the correct MLflow flavour (xgboost / lightgbm / sklearn).
+        Falls back to a raw pickle artifact if no flavour applies or fails.
+        """
+        name = run_name.lower()
+        try:
+            if "xgb" in name:
+                mlflow.xgboost.log_model(estimator, artifact_path="model")
+            elif "lightgbm" in name or "lgbm" in name:
+                mlflow.lightgbm.log_model(estimator, artifact_path="model")
+            else:
+                mlflow.sklearn.log_model(estimator, artifact_path="model")
+            print(f"  [MLFLOW] Model artifact saved for {run_name}.")
+            return
+        except Exception as exc:
+            print(f"  [WARN] Native MLflow flavour failed for {run_name}: {exc}. Falling back to pickle.")
+
+        # Pickle fallback — ensures the model is always persisted even if the
+        # MLflow flavour integration is unavailable or misconfigured.
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        pkl_path = ARTIFACTS_DIR / f"{name.replace(' ', '_')}_model.pkl"
+        try:
+            with open(pkl_path, "wb") as f:
+                pickle.dump(self.model, f)
+            mlflow.log_artifact(str(pkl_path), artifact_path="model")
+            print(f"  [MLFLOW] Pickle fallback saved: {pkl_path}")
+        except Exception as exc:
+            print(f"  [WARN] Could not save model artifact for {run_name}: {exc}")
 
     def _save_confusion_matrix(self, y_true: np.ndarray, y_pred: np.ndarray, run_name: str) -> Path:
         """Save a confusion matrix PNG to ARTIFACTS_DIR and return its path."""
@@ -174,8 +175,8 @@ class Evaluate:
             colorbar=False,
         )
         ax.set_title(run_name)
-        safe     = run_name.lower().replace(" ", "_")
-        cm_path  = ARTIFACTS_DIR / f"{safe}_cm.png"
+        safe    = run_name.lower().replace(" ", "_")
+        cm_path = ARTIFACTS_DIR / f"{safe}_cm.png"
         fig.savefig(cm_path, bbox_inches="tight", dpi=150)
         plt.close(fig)
         return cm_path
@@ -212,8 +213,7 @@ class Evaluate:
 
         Returns
         -------
-        dict with keys: accuracy, macro_f1, weighted_f1, fatal_miss_rate,
-                        false_fatal_rate, weighted_cost.
+        dict with all logged metrics (standard + business).
         """
         # ── Predictions ───────────────────────────────────────────────────────
         if y_pred is None:
@@ -221,21 +221,18 @@ class Evaluate:
 
         y_pred = np.array(y_pred, dtype=str)
         y_true = self.y_test
-        active_run = mlflow.active_run() if log_to_mlflow else None
-        ctx = mlflow.start_run(run_name=run_name) if log_to_mlflow and active_run is None else _nullcontext()
 
         if len(y_pred) != len(y_true):
             raise ValueError(
                 f"Prediction length ({len(y_pred)}) does not match "
                 f"test set length ({len(y_true)})."
             )
-            business_metrics = _compute_business_metrics(y_true, y_pred)
 
         unexpected = set(y_pred) - set(self.class_names)
         if unexpected:
             print(f"  [WARN] predict() returned unexpected labels: {unexpected}")
 
-        # ── Standard metrics ──────────────────────────────────────────────────
+        # ── Metrics ───────────────────────────────────────────────────────────
         acc      = accuracy_score(y_true, y_pred)
         macro_f1 = f1_score(y_true, y_pred, average="macro",    zero_division=0)
         w_f1     = f1_score(y_true, y_pred, average="weighted", zero_division=0)
@@ -247,20 +244,20 @@ class Evaluate:
             output_dict=True,
             zero_division=0,
         )
-
-        # ── Business metrics ──────────────────────────────────────────────────
         business = self._compute_business_metrics(y_true, y_pred)
 
         # ── Console output ────────────────────────────────────────────────────
         print(f"\n{'=' * 42}")
         print(f"  {run_name}")
         print(f"{'=' * 42}")
-        print(f"  Accuracy        : {acc:.4f}")
-        print(f"  Macro F1        : {macro_f1:.4f}")
-        print(f"  Weighted F1     : {w_f1:.4f}")
-        print(f"  Fatal miss rate : {business['fatal_miss_rate']:.4f}  (Fatal→Slight errors / all Fatal)")
-        print(f"  False fatal rate: {business['false_fatal_rate']:.4f}  (Slight→Fatal errors / all Slight)")
-        print(f"  Weighted cost   : {business['weighted_cost']:.2f}  (mean misclassification cost/sample)")
+        print(f"  Accuracy               : {acc:.4f}")
+        print(f"  Macro F1               : {macro_f1:.4f}")
+        print(f"  Weighted F1            : {w_f1:.4f}")
+        print(f"  Fatal recall           : {business['fatal_recall_business']:.4f}")
+        print(f"  Serious recall         : {business['serious_recall_business']:.4f}")
+        print(f"  Critical case recall   : {business['critical_case_recall']:.4f}")
+        print(f"  Critical undertriage   : {business['critical_undertriage_rate']:.4f}  ← primary safety KPI")
+        print(f"  Weighted cost/sample   : {business['weighted_cost']:.2f}")
         print()
         print(classification_report(
             y_true, y_pred,
@@ -269,7 +266,7 @@ class Evaluate:
             zero_division=0,
         ))
 
-        # ── Artifacts ─────────────────────────────────────────────────────────
+        # ── Artifacts (always saved — independent of MLflow) ──────────────────
         cm_path     = self._save_confusion_matrix(y_true, y_pred, run_name)
         report_path = self._save_report_json(report_dict, run_name)
 
@@ -278,9 +275,11 @@ class Evaluate:
 
         with ctx:
             if log_to_mlflow:
-                estimator = self._get_estimator()
-                mlflow.log_param("model_name", run_name)
+                # Log model identity explicitly — satisfies spec requirement.
+                mlflow.log_param("model_name",  run_name)
                 mlflow.log_param("model_class", type(self.model).__name__)
+
+                estimator = self._get_estimator()
                 if hasattr(estimator, "get_params"):
                     try:
                         mlflow.log_params({k: str(v) for k, v in estimator.get_params().items()})
@@ -299,41 +298,19 @@ class Evaluate:
                         mlflow.log_metric(f"{cls}_precision", float(report_dict[cls]["precision"]))
 
                 # Business metrics
-                mlflow.log_metric("fatal_miss_rate",  business["fatal_miss_rate"])
-                mlflow.log_metric("false_fatal_rate", business["false_fatal_rate"])
-                mlflow.log_metric("weighted_cost",    business["weighted_cost"])
-                for metric_name, metric_value in business_metrics.items():
+                for metric_name, metric_value in business.items():
                     mlflow.log_metric(metric_name, metric_value)
 
-                _log_model_artifact(self.model, estimator, run_name)
-
-            # ── Confusion matrix artifact ─────────────────────────────
-            # Skip artifact creation for test runs
-            if not ("test" in run_name.lower()):
-                fig, ax = plt.subplots(figsize=(7, 6))
-                ConfusionMatrixDisplay.from_predictions(
-                    y_true, y_pred, 
-                    labels=self.class_names,
-                    display_labels=self.class_names,
-                    cmap="Blues", 
-                    values_format="d", 
-                    ax=ax, 
-                    colorbar=False
-                )
-                ax.set_title(run_name)
-                safe = run_name.lower().replace(" ", "_")
-                cm_path = ARTIFACTS_DIR / f"{safe}_cm.png"
-                fig.savefig(cm_path, bbox_inches="tight", dpi=150)
-                plt.close(fig)
-
-                # Artifact files
+                # Artifacts
                 mlflow.log_artifact(str(cm_path),     artifact_path="plots")
                 mlflow.log_artifact(str(report_path), artifact_path="reports")
 
-        all_metrics = {
-            "accuracy":         float(acc),
-            "macro_f1":         float(macro_f1),
-            "weighted_f1":      float(w_f1),
+                # Model artifact — dispatches by framework, pickle fallback if needed
+                self._log_model_artifact(estimator, run_name)
+
+        return {
+            "accuracy":    float(acc),
+            "macro_f1":    float(macro_f1),
+            "weighted_f1": float(w_f1),
             **business,
         }
-        return all_metrics

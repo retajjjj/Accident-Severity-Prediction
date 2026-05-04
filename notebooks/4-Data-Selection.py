@@ -64,6 +64,17 @@ with open("../data/interim/y_val.pkl", "wb") as f:
     
 #model testing
 
+#my data
+x_train = pd.read_pickle("../data/processed/x_train.pkl")
+x_test = pd.read_pickle("../data/processed/x_test.pkl")
+y_train = pd.read_pickle("../data/processed/y_train.pkl")
+y_test = pd.read_pickle("../data/processed/y_test.pkl")
+
+#danas data
+
+
+x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.20, random_state=0)
+
 
 from sklearn.utils.class_weight import compute_class_weight
 
@@ -77,13 +88,13 @@ weights = compute_class_weight(
 class_weight_dict = dict(zip([0, 1, 2], weights))
 
 model = RandomForestClassifier(class_weight=class_weight_dict)
-model.fit(X_train, y_train)
-y_pred = model.predict(X_train)
+model.fit(x_train, y_train)
+y_pred = model.predict(x_train)
 
 Lg_score_seen = accuracy_score(y_train, y_pred)
 print('The Accuracy score for Random forest on seen data : ', Lg_score_seen)
 
-y_test_pred = model.predict(X_test)
+y_test_pred = model.predict(x_test)
 Lg_score_unseen = accuracy_score(y_test, y_test_pred)
 print('The Accuracy score for Random forest on unseen data : ', Lg_score_unseen)
 
@@ -114,7 +125,7 @@ pipeline = Pipeline([
     ("over",  oversample)
 ])
 
-X_resampled, y_resampled = pipeline.fit_resample(X_train, y_train)
+X_resampled, y_resampled = pipeline.fit_resample(x_train, y_train)
 print(pd.Series(y_resampled).value_counts())
 
 model.fit(X_resampled, y_resampled)

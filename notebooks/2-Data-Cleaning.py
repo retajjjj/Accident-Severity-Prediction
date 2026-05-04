@@ -17,26 +17,18 @@ for col in df.columns:
 
 df["Accident_Severity"].value_counts()
 
+#drop unwanted columns
+df = df.drop(["Accident_Index","Year_x", "Location_Easting_OSGR", "Location_Northing_OSGR", "1st_Road_Number", "2nd_Road_Number", "LSOA_of_Accident_Location", "model", "InScotland", "Police_Force","Was_Vehicle_Left_Hand_Drive", "Vehicle_Leaving_Carriageway", "Number_of_Casualties"], axis=1)
+
 #handle missing values
 #delete rows: 2nd_Road_Class, Carriageway_Hazards , Special_Conditions_at_Site, Driver_IMD_Decile, Hit_Object_in_Carriageway, Hit_Object_off_Carriageway, Skidding_and_Overturning , time
 df = df.drop(["2nd_Road_Class","Carriageway_Hazards", "Special_Conditions_at_Site", 
               "Driver_IMD_Decile", "Hit_Object_in_Carriageway", "Hit_Object_off_Carriageway", "Skidding_and_Overturning", "time", "Year_y", "Did_Police_Officer_Attend_Scene_of_Accident"], axis =1)
 
-#impute 1st_Road_Number with mean
-df["1st_Road_Number"] = df["1st_Road_Number"].fillna(df["1st_Road_Number"].mean())
-
-#impute 2nd_Road_Number with mean
-sns.scatterplot(df["2nd_Road_Number"])
-df["2nd_Road_Number"] = df["2nd_Road_Number"].fillna(df["2nd_Road_Number"].mean())
 
 #impute latitude
 df["Latitude"] = df["Latitude"].fillna(df["Latitude"].mean())
 
-#impute Location_Easting_OSGR
-df["Location_Easting_OSGR"] = df["Location_Easting_OSGR"].fillna(df["Location_Easting_OSGR"].mean())
-
-#impute Location_Northing_OSGR
-df["Location_Northing_OSGR"] = df["Location_Northing_OSGR"].fillna(df["Location_Northing_OSGR"].mean())
 
 #impute logitude
 df["Longitude"] = df["Longitude"].fillna(df["Longitude"].mean())
@@ -59,8 +51,6 @@ df["Speed_limit"] = df["Speed_limit"].fillna(df["Speed_limit"].mode()[0])
 #impute time
 df["Time"] = df["Time"].fillna(df["Time"].mode()[0])
 
-#impute inscotland
-df["InScotland"] = df["InScotland"].fillna(df["InScotland"].mode()[0])
 
 #impute temp
 grouped = df.groupby(['Date'])["temp"].mean()
@@ -68,7 +58,9 @@ mask = df["temp"].isna()
 df.loc[mask, "temp"] = df.loc[mask, "Date"].map(grouped)
 
 #remove na
-df_imp = df.iloc[:,0:49]
+df.info()
+df_imp = df.iloc[:,0:36]
+df_imp.info()
 
 has_na = df_imp.isna().any(axis=1)
 #is_slight = df_imp['Accident_Severity'] == 'Slight'

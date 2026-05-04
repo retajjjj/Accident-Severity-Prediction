@@ -49,7 +49,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from features import (
+from src.features.build_features import (
         encode_target_variable,
         create_temporal_features,
         create_lighting_features,
@@ -74,7 +74,6 @@ from features import (
         select_features_rfecv,
         select_features_model_based,
         apply_smote,
-        apply_smote_tomek,
     )
 
 
@@ -186,7 +185,17 @@ class DataCleaner:
         Drop columns with >97% missing values (Phase 2 Report).
         """
         df = df.copy()
+        
+        # First drop known problematic columns
         cols_to_drop = [col for col in self.HIGH_MISSING_COLS if col in df.columns]
+        
+        # Also check all columns for >97% missing values
+        missingness_threshold = 0.97
+        for col in df.columns:
+            if col not in cols_to_drop:
+                missing_pct = df[col].isna().sum() / len(df)
+                if missing_pct >= missingness_threshold:
+                    cols_to_drop.append(col)
         
         if cols_to_drop:
             df = df.drop(columns=cols_to_drop)
@@ -227,9 +236,14 @@ class DataCleaner:
             if not pd.api.types.is_datetime64_any_dtype(df['Date']):
                 df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             
-            # Overwrite with correct values from Date
-            df['Day_of_Week'] = df['Date'].dt.day_name()
-            self.log_step(f"  ✓ Corrected Day_of_Week consistency violations")
+            # Remove Day_of_Week column entirely since it contains string values
+            # and we don't need it for modeling (temporal features are created separately)
+            df = df.drop(columns=['Day_of_Week'])
+            self.log_step(f"  ✓ Removed Day_of_Week column to prevent string conversion issues")
+            
+            # Remove Date column after extracting temporal features
+            df = df.drop(columns=['Date'])
+            self.log_step(f"  ✓ Removed Date column to prevent datetime issues")
         
         return df
     
@@ -367,6 +381,10 @@ class DataCleaner:
         - UNIQUENESS (0): Duplicates
         - JOIN INTEGRITY (2): Orphaned records (already handled by inner join in Phase 2)
         """
+        # Validate input dataframe
+        if df is None or len(df) == 0:
+            raise ValueError("Cannot clean empty or None dataframe")
+        
         self.initial_shape = df.shape
         
         self.log_step(f"\n{'='*70}")
@@ -409,7 +427,7 @@ class DataCleaner:
         self.final_shape = df.shape
         
         records_removed = self.initial_shape[0] - self.final_shape[0]
-        pct_removed = (records_removed / self.initial_shape[0]) * 100
+        pct_removed = (records_removed / self.initial_shape[0]) * 100 if self.initial_shape[0] > 0 else 0
         
         self.log_step(f"\n{'='*70}")
         self.log_step(f"CLEANING COMPLETE - All 15 Issues Handled")
@@ -864,6 +882,14 @@ def prepare_train_val_test_split(df: pd.DataFrame,
             random_state=CONFIG['random_state']
         )
         #X_train, y_train = apply_smote_tomek(X_train, y_train, random_state=CONFIG['random_state'])
+    
+    # Remove datetime columns before scaling
+    datetime_cols = X_train.select_dtypes(include=['datetime64']).columns
+    if len(datetime_cols) > 0:
+        logger.info(f"Removing datetime columns before scaling: {list(datetime_cols)}")
+        X_train = X_train.drop(columns=datetime_cols)
+        X_val = X_val.drop(columns=datetime_cols)
+        X_test = X_test.drop(columns=datetime_cols)
     
     # Scale features (fit on training data, apply to all)
     logger.info(f"\n✓ Fitting scaler on training data...")

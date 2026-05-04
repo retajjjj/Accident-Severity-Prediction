@@ -32,7 +32,7 @@ from sklearn.metrics import f1_score
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from models.evaluate import Evaluate
+from src.models.evaluate import Evaluate
 from models.logistic_regression import LogisticRegressionModel
 from models.random_forest import RandomForestModel
 from models.xgboost_model import XGBoostModel

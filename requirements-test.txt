@@ -1,0 +1,37 @@
+# Testing dependencies for Accident Severity Prediction project
+# Minimal set for core functionality (Windows compatible)
+# Install with: pip install -r requirements-test.txt
+
+# Core testing framework
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Coverage reporting
+coverage>=7.0.0
+
+# Reporting
+pytest-html>=3.1.1
+pytest-json-report>=1.5.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Time testing
+freezegun>=1.2.2
+pytest-timeout>=2.1.0
+
+# Mocking and spying
+responses>=0.23.0
+vcrpy>=5.1.0
+
+# Data validation testing
+great-expectations>=0.15.0
+pandera>=0.15.0
+
+# ML model testing
+mlflow>=2.5.0
+scikit-learn>=1.3.0
+
+# PostgreSQL support for testing
+psycopg[binary]>=3.1.0

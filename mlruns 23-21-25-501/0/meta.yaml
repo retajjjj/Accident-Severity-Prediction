@@ -1,0 +1,4 @@
+artifact_location: file:///Users/manarfarghaly/Desktop/Data/senior2firstterm/datascience/AccidentSeverity/Accident-Severity-Prediction/mlruns/0
+experiment_id: '0'
+lifecycle_stage: active
+name: Accident_Severity_Pipeline

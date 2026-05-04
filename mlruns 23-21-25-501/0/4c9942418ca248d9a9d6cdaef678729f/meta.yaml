@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/manarfarghaly/Desktop/Data/senior2firstterm/datascience/AccidentSeverity/Accident-Severity-Prediction/mlruns/0/4c9942418ca248d9a9d6cdaef678729f/artifacts
+end_time: 1777827695128
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+name: ''
+run_id: 4c9942418ca248d9a9d6cdaef678729f
+run_uuid: 4c9942418ca248d9a9d6cdaef678729f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1777827692299
+status: 3
+tags: []
+user_id: manarfarghaly

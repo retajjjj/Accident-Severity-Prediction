@@ -345,9 +345,9 @@ def main() -> None:
     mlflow.set_experiment("Accident_Severity_Pipeline")
 
     models = [
-        ("baseline_constant",BaselineModel(strategy="constant", constant="Slight"))
-        ("baseline_stratified" ,BaselineModel(strategy="stratified"))
-        ("baseline_frequent") ,BaselineModel(strategy="most_frequent")
+        ("baseline_constant",BaselineModel(strategy="constant", constant="Slight")),
+        ("baseline_stratified" ,BaselineModel(strategy="stratified")),
+        ("baseline_frequent") ,BaselineModel(strategy="most_frequent"),
         ("LogReg",   LogisticRegressionModel()),
         ("RF",       RandomForestModel()),
         ("XGB",      XGBoostModel()),

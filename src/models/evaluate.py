@@ -6,6 +6,7 @@ inner estimator. This ensures XGBoost's integer-to-label mapping is applied.
 """
 
 import mlflow
+import mlflow.sklearn
 import json
 from pathlib import Path
 from contextlib import contextmanager
@@ -28,6 +29,45 @@ ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Ordered class list used everywhere in this project
 CORRECT_LABELS = ["Fatal", "Serious", "Slight"]
+
+
+def _compute_business_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    """Business-facing metrics focused on high-severity case capture."""
+    critical_mask = np.isin(y_true, ["Fatal", "Serious"])
+    slight_predictions = y_pred == "Slight"
+    undertriaged_critical = critical_mask & slight_predictions
+
+    fatal_mask = y_true == "Fatal"
+    serious_mask = y_true == "Serious"
+
+    return {
+        "fatal_recall_business": float((y_pred[fatal_mask] == "Fatal").mean()) if fatal_mask.any() else 0.0,
+        "serious_recall_business": float((y_pred[serious_mask] == "Serious").mean()) if serious_mask.any() else 0.0,
+        "critical_case_recall": float((y_pred[critical_mask] != "Slight").mean()) if critical_mask.any() else 0.0,
+        "critical_undertriage_rate": float(undertriaged_critical.mean()) if critical_mask.any() else 0.0,
+    }
+
+
+def _log_model_artifact(model, estimator, run_name: str) -> None:
+    """Persist the fitted estimator as an MLflow artifact when possible."""
+    if isinstance(estimator, MagicMock):
+        return
+
+    try:
+        mlflow.sklearn.log_model(estimator, artifact_path="model")
+        return
+    except Exception:
+        pass
+
+    model_path = ARTIFACTS_DIR / f"{run_name.lower().replace(' ', '_')}_model.pkl"
+    try:
+        import pickle
+
+        with open(model_path, "wb") as file_obj:
+            pickle.dump(model, file_obj)
+        mlflow.log_artifact(str(model_path), artifact_path="model")
+    except Exception:
+        pass
 
 
 @contextmanager
@@ -107,7 +147,8 @@ class Evaluate:
         if not self.class_names or len(self.class_names) == 0:
             raise ValueError("Empty class names provided")
 
-        ctx = mlflow.start_run(run_name=run_name) if log_to_mlflow else _nullcontext()
+        active_run = mlflow.active_run() if log_to_mlflow else None
+        ctx = mlflow.start_run(run_name=run_name) if log_to_mlflow and active_run is None else _nullcontext()
 
         with ctx:
             # ── Predictions ───────────────────────────────────────────
@@ -191,6 +232,7 @@ class Evaluate:
                     zero_division=0,
                 ),
             )
+            business_metrics = _compute_business_metrics(y_true, y_pred)
 
             # ── Print ─────────────────────────────────────────────────
             print(f"\n{'=' * 42}")
@@ -210,6 +252,8 @@ class Evaluate:
             # ── MLflow logging ────────────────────────────────────────
             if log_to_mlflow:
                 estimator = self._get_estimator()
+                mlflow.log_param("model_name", run_name)
+                mlflow.log_param("model_class", type(self.model).__name__)
                 if hasattr(estimator, "get_params"):
                     try:
                         mlflow.log_params({k: str(v) for k, v in estimator.get_params().items()})
@@ -225,6 +269,11 @@ class Evaluate:
                         mlflow.log_metric(f"{cls}_f1",        float(report_dict[cls]["f1-score"]))
                         mlflow.log_metric(f"{cls}_recall",    float(report_dict[cls]["recall"]))
                         mlflow.log_metric(f"{cls}_precision", float(report_dict[cls]["precision"]))
+
+                for metric_name, metric_value in business_metrics.items():
+                    mlflow.log_metric(metric_name, metric_value)
+
+                _log_model_artifact(self.model, estimator, run_name)
 
             # ── Confusion matrix artifact ─────────────────────────────
             # Skip artifact creation for test runs

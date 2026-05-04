@@ -23,6 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.models.evaluate import Evaluate
+from models.baseline import BaselineModel
 from models.logistic_regression import LogisticRegressionModel
 from models.random_forest import RandomForestModel
 from models.xgboost_model import XGBoostModel
@@ -313,10 +314,10 @@ def main():
     mlflow.set_experiment("Accident_Severity_Pipeline")
 
     models = [
-        # ("baseline_constant",BaselineModel(strategy="constant", constant="Slight"))
-        # ("baseline_stratified" ,BaselineModel(strategy="stratified"))
-        # ("baseline_frequent") ,BaselineModel(strategy="most_frequent")
-        #("LogReg",   LogisticRegressionModel()),
+        ("Baseline_Constant_Slight", BaselineModel(strategy="constant", constant="Slight")),
+        ("Baseline_Stratified", BaselineModel(strategy="stratified")),
+        ("Baseline_Most_Frequent", BaselineModel(strategy="most_frequent")),
+        ("LogReg",   LogisticRegressionModel()),
         #("RF",       RandomForestModel()),
         ("XGB",      XGBoostModel()),
         #("CatBoost", CatBoostModel()),
@@ -375,7 +376,7 @@ def main():
             evaluator.evaluate(
                 run_name=run_name + "_thresholded",
                 y_pred=y_pred_thresh,
-                log_to_mlflow=False,
+                log_to_mlflow=True,
             )
 
 

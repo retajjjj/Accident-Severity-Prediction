@@ -35,6 +35,50 @@ _MISCLASSIFICATION_COST = {
     "Slight":  {"Fatal": 2, "Serious": 1,   "Slight": 0},
 }
 
+def _compute_business_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    """Business-facing metrics focused on high-severity case capture."""
+    critical_mask = np.isin(y_true, ["Fatal", "Serious"])
+    slight_predictions = y_pred == "Slight"
+    undertriaged_critical = critical_mask & slight_predictions
+
+    fatal_mask = y_true == "Fatal"
+    serious_mask = y_true == "Serious"
+
+    return {
+        "fatal_recall_business": float((y_pred[fatal_mask] == "Fatal").mean()) if fatal_mask.any() else 0.0,
+        "serious_recall_business": float((y_pred[serious_mask] == "Serious").mean()) if serious_mask.any() else 0.0,
+        "critical_case_recall": float((y_pred[critical_mask] != "Slight").mean()) if critical_mask.any() else 0.0,
+        "critical_undertriage_rate": float(undertriaged_critical.mean()) if critical_mask.any() else 0.0,
+    }
+
+
+def _log_model_artifact(model, estimator, run_name: str) -> None:
+    """Persist the fitted estimator as an MLflow artifact when possible."""
+    if isinstance(estimator, MagicMock):
+        return
+
+    try:
+        mlflow.sklearn.log_model(estimator, artifact_path="model")
+        return
+    except Exception:
+        pass
+
+    model_path = ARTIFACTS_DIR / f"{run_name.lower().replace(' ', '_')}_model.pkl"
+    try:
+        import pickle
+
+        with open(model_path, "wb") as file_obj:
+            pickle.dump(model, file_obj)
+        mlflow.log_artifact(str(model_path), artifact_path="model")
+    except Exception:
+        pass
+
+
+@contextmanager
+def _nullcontext():
+    """No-op context manager for log_to_mlflow=False branches."""
+    yield
+
 
 class Evaluate:
     """
@@ -177,12 +221,15 @@ class Evaluate:
 
         y_pred = np.array(y_pred, dtype=str)
         y_true = self.y_test
+        active_run = mlflow.active_run() if log_to_mlflow else None
+        ctx = mlflow.start_run(run_name=run_name) if log_to_mlflow and active_run is None else _nullcontext()
 
         if len(y_pred) != len(y_true):
             raise ValueError(
                 f"Prediction length ({len(y_pred)}) does not match "
                 f"test set length ({len(y_true)})."
             )
+            business_metrics = _compute_business_metrics(y_true, y_pred)
 
         unexpected = set(y_pred) - set(self.class_names)
         if unexpected:
@@ -232,6 +279,8 @@ class Evaluate:
         with ctx:
             if log_to_mlflow:
                 estimator = self._get_estimator()
+                mlflow.log_param("model_name", run_name)
+                mlflow.log_param("model_class", type(self.model).__name__)
                 if hasattr(estimator, "get_params"):
                     try:
                         mlflow.log_params({k: str(v) for k, v in estimator.get_params().items()})
@@ -253,6 +302,29 @@ class Evaluate:
                 mlflow.log_metric("fatal_miss_rate",  business["fatal_miss_rate"])
                 mlflow.log_metric("false_fatal_rate", business["false_fatal_rate"])
                 mlflow.log_metric("weighted_cost",    business["weighted_cost"])
+                for metric_name, metric_value in business_metrics.items():
+                    mlflow.log_metric(metric_name, metric_value)
+
+                _log_model_artifact(self.model, estimator, run_name)
+
+            # ── Confusion matrix artifact ─────────────────────────────
+            # Skip artifact creation for test runs
+            if not ("test" in run_name.lower()):
+                fig, ax = plt.subplots(figsize=(7, 6))
+                ConfusionMatrixDisplay.from_predictions(
+                    y_true, y_pred, 
+                    labels=self.class_names,
+                    display_labels=self.class_names,
+                    cmap="Blues", 
+                    values_format="d", 
+                    ax=ax, 
+                    colorbar=False
+                )
+                ax.set_title(run_name)
+                safe = run_name.lower().replace(" ", "_")
+                cm_path = ARTIFACTS_DIR / f"{safe}_cm.png"
+                fig.savefig(cm_path, bbox_inches="tight", dpi=150)
+                plt.close(fig)
 
                 # Artifact files
                 mlflow.log_artifact(str(cm_path),     artifact_path="plots")

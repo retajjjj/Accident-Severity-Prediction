@@ -18,7 +18,7 @@ X = X.fillna(X.mean())
 
 model = LogisticRegression()
 
-min_features_to_select = 10 
+min_features_to_select = 15
 clf = LogisticRegression()
 cv = StratifiedKFold(5)
 
@@ -40,23 +40,31 @@ print(selected_features)
 
 X_Selectkbest = X[selected_features]
 X_Selectkbest.head()
-X_train, X_test, y_train, y_test = train_test_split(X_Selectkbest, y, test_size=0.20, random_state=0)
-
+X_temp, X_test, y_temp, y_test = train_test_split(X_Selectkbest, y, test_size=0.20, random_state=0)
+X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.25, random_state=42)
 
 with open("../data/interim/x_train.pkl", "wb") as f:
     pickle.dump(X_train, f)
     
-with open("../data/interim/X_test.pkl", "wb") as f:
+with open("../data/interim/x_test.pkl", "wb") as f:
     pickle.dump(X_test, f)
+
+with open("../data/interim/x_val.pkl", "wb") as f:
+    pickle.dump(X_val, f)
     
 with open("../data/interim/y_train.pkl", "wb") as f:
     pickle.dump(y_train, f)
 
 with open("../data/interim/y_test.pkl", "wb") as f:
     pickle.dump(y_test, f)
+
+with open("../data/interim/y_val.pkl", "wb") as f:
+    pickle.dump(y_val, f)
     
     
 #model testing
+
+
 from sklearn.utils.class_weight import compute_class_weight
 
 classes_array = np.unique(y_train)
@@ -91,8 +99,8 @@ from imblearn.pipeline import Pipeline
 
 undersample = RandomUnderSampler(sampling_strategy={
     0: 400000,   # reduce from 1.1M to 400k
-    1: 134175,   
-    2: 13103,   
+    1: 100542,   
+    2: 9790,   
 })
 
 oversample = SMOTE(sampling_strategy={
@@ -123,5 +131,3 @@ matrix = confusion_matrix(y_test, y_test_pred)
 print(classification_report(y_test, y_test_pred))
 
 
-with open("../data/interim/transformed_data.pkl", "wb") as f:
-    pickle.dump(df, f)

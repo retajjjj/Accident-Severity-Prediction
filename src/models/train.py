@@ -27,11 +27,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.models.evaluate import Evaluate
-from models.baseline import BaselineModel
-from models.logistic_regression import LogisticRegressionModel
-from models.random_forest import RandomForestModel
-from models.xgboost_model import XGBoostModel
-from models.catboost_model import CatBoostModel
+from models.Baseline import BaselineModel
+from models.LogisticRegression import LogisticRegressionModel
+from models.RandomForest import RandomForestModel
+from models.XgboostModel import XGBoostModel
+from models.CatboostModel import CatBoostModel
 from models.LightGBM import LGBMModel
 
 

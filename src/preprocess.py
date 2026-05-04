@@ -8,10 +8,21 @@ This script orchestrates the complete data preprocessing workflow:
     3. Engineer features (hour_of_day, day_of_week, is_weekend, month, season, is_dark, is_adverse_weather, road_risk_score, max_driver_age, min_driver_age, num_motorcycles, involves_pedestrian)
     4. Handle missing values and outliers
     5. Encode categorical variables
-    6. Select 7 best features (FEATURE_SELECTION.md for rationale)
+    6. Select best features using RFECV or Random Forest (or BOTH for comparison)
     7. Apply SMOTE to training split only
     8. Scale numerical features
     9. Save train/test/val splits
+    
+FEATURE SELECTION MODES:
+    Single Method (default):
+        - Set feature_selection_method='rfecv' for RFECV-based selection
+        - Set feature_selection_method='model_based' for Random Forest importance
+    
+    Comparison Mode:
+        - Set compare_feature_selection=True to run BOTH methods
+        - Primary method (feature_selection_method) is used for train/val/test splits
+        - Alternative feature sets saved to data/processed/feature_selection_comparison.pkl
+        - Compare model performance (recall, accuracy, etc.) in model evaluation phase
     
 Usage:
     poetry run python accident_severity_predictor/preprocess.py
@@ -23,6 +34,7 @@ Outputs (saved to data/processed/):
     - X_test.pkl, y_test.pkl
     - scaler.pkl, feature_names.pkl
     - preprocessing_report.txt (summary)
+    - feature_selection_comparison.pkl (if compare_feature_selection=True)
 """
 
 import logging
@@ -38,15 +50,28 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from features import (
+        encode_target_variable,
         create_temporal_features,
         create_lighting_features,
+        encode_road_type_features,
+        encode_road_surface_features,
+        encode_weather_condition_features,
+        encode_urban_rural_features,
         create_weather_features,
         create_weather_composite_features,
         create_road_risk_features,
         create_vehicle_features,
+        encode_vehicle_attributes,
+        encode_driver_features,
+        encode_manoeuvre_features,
+        encode_junction_features,
+        encode_journey_features,
+        encode_administrative_features,
+        create_interaction_features,
         handle_missing_values,
         detect_and_handle_outliers,
         encode_categorical_features,
+        select_features_rfecv,
         select_features_model_based,
         apply_smote,
     )
@@ -70,7 +95,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
 # Paths
-PROJECT_ROOT = Path(__file__).parent.parent.parent  # Go up to project root
+PROJECT_ROOT = Path(__file__).parent.parent  # Go up to Accident-Severity-Prediction root
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 INTERIM_DIR = DATA_DIR / "interim"
@@ -86,7 +111,10 @@ CONFIG = {
     'test_size': 0.2,
     'random_state': 42,
     'missing_threshold': 50.0,
-    'n_features_to_select': 9,
+    'feature_selection_method': 'rfecv',  # Primary method: 'rfecv' or 'model_based'
+    'rfecv_min_features': 15,  # Minimum features for RFECV (requirement: ≥7)
+    'rfecv_cv_folds': 5,  # Cross-validation folds for RFECV
+    'compare_feature_selection': True,  # If True, run both RFECV and Random Forest for comparison
     'apply_smote': True,
     'smote_sampling_strategy': 'not majority',
 }
@@ -468,20 +496,57 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Temporal features
     df = create_temporal_features(df)
     
-    # Lighting features
+    # Lighting features (creates is_dark, not is_daylight to avoid redundancy)
     df = create_lighting_features(df)
+    
+    # ─── Basic categorical encoding (must be before Road_Type usage) ────────
+    # Encode Road_Type (required before road_risk_features)
+    df = encode_road_type_features(df)
+    
+    # Encode road surface to is_wet_road
+    df = encode_road_surface_features(df)
+    
+    # Encode weather conditions to is_adverse_weather
+    df = encode_weather_condition_features(df)
+    
+    # Encode urban/rural to is_urban
+    df = encode_urban_rural_features(df)
     
     # Weather features
     df = create_weather_features(df)
     
-    # Road risk features (must be before composite features that use road_risk_score)
+    # Road risk features (uses encoded Road_Type)
     df = create_road_risk_features(df)
     
-    # Composite weather features (combines weather with other risk factors)
+    # Composite weather features
     df = create_weather_composite_features(df)
     
-    # Vehicle features
+    # Vehicle aggregation (for multi-vehicle accidents)
     df = create_vehicle_features(df)
+    
+    # ─── Feature-specific encodings ─────────────────────────────────────────
+    # Encode vehicle attributes
+    df = encode_vehicle_attributes(df)
+    
+    # Encode driver features
+    df = encode_driver_features(df)
+    
+    # Encode manoeuvre
+    df = encode_manoeuvre_features(df)
+    
+    # Encode junction features
+    df = encode_junction_features(df)
+    
+    # Encode journey features
+    df = encode_journey_features(df)
+    
+    # Encode administrative/location features
+    df = encode_administrative_features(df)
+    
+    # Create interaction features (must be after base features exist)
+    df = create_interaction_features(df)
+    
+    # ─────────────────────────────────────────────────────────────────────────
     
     new_cols = df.shape[1] - initial_cols
     logger.info(f"✓ Feature engineering complete")
@@ -509,31 +574,34 @@ def preprocess_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, dict]:
     
     # Handle missing values
     logger.info("Handling missing values...")
+    logger.info(f"Before handle_missing_values: Accident_Severity classes={df['Accident_Severity'].unique()}")
     df = handle_missing_values(df, missing_threshold=CONFIG['missing_threshold'])
+    logger.info(f"After handle_missing_values: Accident_Severity classes={df['Accident_Severity'].unique()}")
     
     # Detect and handle outliers
     logger.info("\nDetecting outliers in numerical features...")
+    logger.info(f"Before outlier_detection: Accident_Severity classes={df['Accident_Severity'].unique()}")
     df, outlier_stats = detect_and_handle_outliers(
         df,
         method='iqr',
         iqr_multiplier=1.5,
         action='clip'
     )
+    logger.info(f"After outlier_detection: Accident_Severity classes={df['Accident_Severity'].unique()}")
     metadata['outlier_stats'] = outlier_stats
     
     # Encode categorical features
     logger.info("\nEncoding categorical features...")
+    logger.info(f"Before categorical_encoding: Accident_Severity classes={df['Accident_Severity'].unique()}")
     categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
     # Remove non-predictive columns
     skip_cols = ['Accident_Severity', 'Accident_Index', 'Date', 'Day_of_Week']
     categorical_cols = [c for c in categorical_cols if c not in skip_cols]
     
     df, encoders = encode_categorical_features(
-        df,
-        categorical_cols=categorical_cols,
-        method='onehot',
-        max_categories=10
+        df, categorical_cols=categorical_cols, method='label', max_categories=20
     )
+    logger.info(f"After categorical_encoding: Accident_Severity classes={df['Accident_Severity'].unique()}")
     metadata['encoders'] = encoders
     
     logger.info(f"✓ Preprocessing complete")
@@ -544,14 +612,27 @@ def preprocess_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, dict]:
 
 def select_features(X: pd.DataFrame, 
                    y: pd.Series,
-                   n_features: int = None) -> Tuple[List[str], dict]:
+                   method: str = None) -> Tuple[List[str], dict]:
     """
-    Perform feature selection using model-based method (Random Forest importance).
+    Perform feature selection using RFECV and/or Random Forest methods.
+    
+    Supports two methods for comparison:
+    1. RFECV: Recursive Feature Elimination with Cross-Validation
+       - Automatically determines optimal number of features via CV
+       - More robust to overfitting
+    
+    2. Random Forest: Tree-based feature importance
+       - Fast and interpretable
+       - Good for understanding feature relationships
+    
+    When compare_feature_selection is True, runs BOTH methods and saves results
+    for later comparison during model evaluation. Uses the primary method
+    (feature_selection_method in CONFIG) for train/val/test split.
     
     Args:
-        X: Feature matrix (should be numeric)
+        X: Feature matrix (should be numeric after preprocessing)
         y: Target variable
-        n_features: Number of features to select (uses CONFIG if None)
+        method: Feature selection method (uses CONFIG if None). Options: 'rfecv', 'model_based', 'both'
     
     Returns:
         (selected_feature_names, selection_results_dict)
@@ -560,12 +641,33 @@ def select_features(X: pd.DataFrame,
     logger.info("STEP 5: FEATURE SELECTION")
     logger.info("=" * 70 + "\n")
     
-    if n_features is None:
-        n_features = CONFIG['n_features_to_select']
+    if method is None:
+        method = CONFIG.get('feature_selection_method', 'rfecv')
     
-    logger.info(f"Target: {n_features} features (requirement: ≥7)\n")
+    # Check if we should run both methods for comparison
+    run_comparison = CONFIG.get('compare_feature_selection', False)
+    if run_comparison:
+        method = 'both'
+    
+    logger.info(f"Feature selection mode: {method.upper()}")
+    if run_comparison:
+        logger.info(f"Primary method for train/val/test split: {CONFIG.get('feature_selection_method', 'rfecv').upper()}\n")
+    else:
+        logger.info()
     
     results = {}
+    
+    # Diagnostic: Check target variable
+    logger.info(f"Target variable (y) diagnostic:")
+    logger.info(f"  - Type: {type(y)}")
+    logger.info(f"  - Length: {len(y) if y is not None else 'None'}")
+    if y is not None:
+        logger.info(f"  - Unique values: {y.unique() if hasattr(y, 'unique') else set(y)}")
+        logger.info(f"  - Value counts:\n{y.value_counts().sort_index() if hasattr(y, 'value_counts') else {}}")
+    
+    logger.info(f"Feature matrix (X) diagnostic:")
+    logger.info(f"  - Shape: {X.shape}")
+    logger.info(f"  - Columns: {list(X.columns)[:5]}... (showing first 5)")
     
     # Filter to numeric columns only (drop any remaining string/object columns)
     numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
@@ -576,24 +678,97 @@ def select_features(X: pd.DataFrame,
     
     logger.info(f"Using {len(X_numeric.columns)} numeric features for selection\n")
     
-    # Model-based selection (Random Forest)
-    logger.info("Using Random Forest feature importance...")
-    model_features, model_scores = select_features_model_based(
-        X_numeric, y, top_k=max(n_features, 10)
-    )
-    results['model_based'] = {
-        'features': model_features,
-        'scores': model_scores.head(n_features).to_dict('records')
-    }
+    # ─────────────────────────────────────────────────────────────────────────
+    # RFECV Feature Selection
+    # ─────────────────────────────────────────────────────────────────────────
+    if method in ['rfecv', 'both']:
+        min_features = CONFIG.get('rfecv_min_features', 15)
+        cv_folds = CONFIG.get('rfecv_cv_folds', 5)
+        
+        logger.info("=" * 70)
+        logger.info("METHOD 1: RFECV (Recursive Feature Elimination + Cross-Validation)")
+        logger.info("=" * 70)
+        logger.info(f"Parameters:")
+        logger.info(f"  - Base estimator: LogisticRegression")
+        logger.info(f"  - CV folds: {cv_folds}")
+        logger.info(f"  - Min features to select: {min_features}\n")
+        
+        rfecv_features, rfecv_ranking = select_features_rfecv(
+            X_numeric, 
+            y,
+            min_features_to_select=min_features,
+            random_state=CONFIG['random_state'],
+            cv_folds=cv_folds
+        )
+        
+        results['rfecv'] = {
+            'selected_features': rfecv_features,
+            'n_features': len(rfecv_features),
+            'ranking_scores': rfecv_ranking.to_dict('records')
+        }
     
-    final_features = model_features[:n_features]
-    results['final_features'] = final_features
+    # ─────────────────────────────────────────────────────────────────────────
+    # Random Forest Feature Selection
+    # ─────────────────────────────────────────────────────────────────────────
+    if method in ['model_based', 'both']:
+        if method == 'both':
+            logger.info("\n" + "=" * 70)
+        logger.info("METHOD 2: RANDOM FOREST (Tree-based Feature Importance)")
+        logger.info("=" * 70)
+        logger.info(f"Parameters:")
+        logger.info(f"  - Estimator: RandomForestClassifier(n_estimators=50, max_depth=10)")
+        logger.info(f"  - Selection: Top-k by importance\n")
+        
+        # Use same number of features as RFECV for fair comparison
+        if method == 'both' and 'rfecv' in results:
+            n_features = results['rfecv']['n_features']
+        else:
+            n_features = CONFIG.get('rfecv_min_features', 25)
+        
+        rf_features, rf_importance = select_features_model_based(
+            X_numeric, y, top_k=n_features
+        )
+        
+        results['model_based'] = {
+            'selected_features': rf_features,
+            'n_features': len(rf_features),
+            'importance_scores': rf_importance.head(n_features).to_dict('records')
+        }
     
-    logger.info(f"\n✓ Selected {len(final_features)} features:\n")
-    for i, f in enumerate(final_features, 1):
-        logger.info(f"  {i:2d}. {f}")
+    # ─────────────────────────────────────────────────────────────────────────
+    # Select Primary Method Features for Train/Val/Test Split
+    # ─────────────────────────────────────────────────────────────────────────
+    primary_method = CONFIG.get('feature_selection_method', 'rfecv')
     
-    return final_features, results
+    if method == 'both':
+        logger.info("\n" + "=" * 70)
+        logger.info("COMPARISON SUMMARY")
+        logger.info("=" * 70)
+        
+        if primary_method in results:
+            selected_features = results[primary_method]['selected_features']
+            logger.info(f"\n✓ Using {primary_method.upper()} features for train/val/test split")
+            logger.info(f"  Number of features: {len(selected_features)}\n")
+            
+            # Show comparison
+            logger.info(f"RFECV features: {results['rfecv']['n_features']}")
+            logger.info(f"Random Forest features: {results['model_based']['n_features']}")
+            logger.info(f"\nBoth feature sets saved for later comparison during model evaluation")
+        else:
+            raise ValueError(f"Primary method '{primary_method}' not found in results")
+    else:
+        if primary_method == 'rfecv':
+            selected_features = results['rfecv']['selected_features']
+        else:
+            selected_features = results['model_based']['selected_features']
+        
+        logger.info(f"\n✓ Selected {len(selected_features)} features using {primary_method.upper()}")
+    
+    results['final_features'] = selected_features
+    results['n_features_selected'] = len(selected_features)
+    results['primary_method'] = primary_method
+    
+    return selected_features, results
 
 
 def prepare_train_val_test_split(df: pd.DataFrame,
@@ -803,7 +978,8 @@ def generate_report(X_train: pd.DataFrame,
                    y_train: pd.Series,
                    y_val: pd.Series,
                    y_test: pd.Series,
-                   feature_names: List[str]) -> str:
+                   feature_names: List[str],
+                   selection_results: dict = None) -> str:
     """
     Generate a text summary report of preprocessing.
     
@@ -815,6 +991,15 @@ def generate_report(X_train: pd.DataFrame,
     report.append("DATA PREPROCESSING REPORT")
     report.append("=" * 70)
     report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    if selection_results and CONFIG.get('compare_feature_selection', False):
+        report.append(f"\nFEATURE SELECTION COMPARISON MODE:")
+        if 'rfecv' in selection_results:
+            report.append(f"  - RFECV selected: {selection_results['rfecv']['n_features']} features")
+        if 'model_based' in selection_results:
+            report.append(f"  - Random Forest selected: {selection_results['model_based']['n_features']} features")
+        report.append(f"  - Primary method used: {selection_results.get('primary_method', 'rfecv').upper()}")
+        report.append(f"\nBoth feature sets are saved for later model comparison")
     
     report.append("\n" + "-" * 70)
     report.append("DATA SHAPES")
@@ -866,15 +1051,35 @@ def main():
         
         # 1. Load raw merged data
         df = load_data()
+        logger.info(f"After load: shape={df.shape}")
+        logger.info(f"  Raw Accident_Severity value counts:\n{df['Accident_Severity'].value_counts()}")
+        logger.info(f"  Unique classes: {df['Accident_Severity'].unique()}")
         
         # 2. Clean data (per Phase 2 validation report)
         df = clean_data(df)
+        logger.info(f"After clean: shape={df.shape}")
+        logger.info(f"  Raw Accident_Severity value counts:\n{df['Accident_Severity'].value_counts()}")
+        logger.info(f"  Unique classes: {df['Accident_Severity'].unique()}")
         
-        # 3. Engineer features
+        # 2.5. Engineer features with target encoding (BEFORE target variable encoding)
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 3: FEATURE ENGINEERING (Target Encoding BEFORE Target Encoding)")
+        logger.info("=" * 70 + "\n")
         df = engineer_features(df)
+        logger.info(f"After engineer: shape={df.shape}, Accident_Severity classes={df['Accident_Severity'].unique()}")
+        
+        # 2.6. Encode target variable to numeric (AFTER target encoding)
+        logger.info("\n" + "=" * 70)
+        logger.info("STEP 3.5: TARGET VARIABLE ENCODING (After Target Encoding)")
+        logger.info("=" * 70 + "\n")
+        df = encode_target_variable(df)
+        logger.info(f"After encode_target: shape={df.shape}, Accident_Severity dtype={df['Accident_Severity'].dtype}")
+        logger.info(f"  Accident_Severity value counts:\n{df['Accident_Severity'].value_counts().sort_index()}")
+        logger.info(f"After engineer: shape={df.shape}, Accident_Severity classes={df['Accident_Severity'].unique()}")
         
         # 4. Preprocess features
         df, preprocessing_metadata = preprocess_features(df)
+        logger.info(f"After preprocess: shape={df.shape}, Accident_Severity classes={df['Accident_Severity'].unique()}")
         
         # 5. Select features
         selected_features, selection_results = select_features(
@@ -900,19 +1105,53 @@ def main():
         )
         
         # 8. Generate and save report
-        report_text = generate_report(X_train, X_val, X_test, y_train, y_val, y_test, feature_names)
+        report_text = generate_report(
+            X_train, X_val, X_test, 
+            y_train, y_val, y_test, 
+            feature_names,
+            selection_results=selection_results
+        )
         
         with open(REPORTS_DIR / 'preprocessing_report.txt', 'w') as f:
             f.write(report_text)
         
         logger.info("✓ Report saved to: reports/preprocessing_report.txt")
-        logger.info("\n" + "="*70)
+        
+        # 9. If comparison mode, save alternative feature sets for later testing
+        if CONFIG.get('compare_feature_selection', False):
+            logger.info("\n" + "="*70)
+            logger.info("SAVING ALTERNATIVE FEATURE SETS FOR COMPARISON")
+            logger.info("="*70 + "\n")
+            
+            if 'rfecv' in selection_results and 'model_based' in selection_results:
+                comparison_data = {
+                    'rfecv_features': selection_results['rfecv']['selected_features'],
+                    'model_based_features': selection_results['model_based']['selected_features'],
+                    'rfecv_n_features': selection_results['rfecv']['n_features'],
+                    'model_based_n_features': selection_results['model_based']['n_features'],
+                    'primary_method': selection_results['primary_method'],
+                }
+                
+                with open(PROCESSED_DIR / 'feature_selection_comparison.pkl', 'wb') as f:
+                    pickle.dump(comparison_data, f)
+                
+                logger.info(f"✓ Saved feature selection comparison data")
+                logger.info(f"  - RFECV: {selection_results['rfecv']['n_features']} features")
+                logger.info(f"  - Random Forest: {selection_results['model_based']['n_features']} features")
+                logger.info(f"  - File: data/processed/feature_selection_comparison.pkl\n")
+        
+        logger.info("="*70)
         logger.info("PREPROCESSING PIPELINE COMPLETE ✓")
         logger.info("="*70)
         logger.info("\nNext steps: Use the preprocessed data for model training")
         logger.info(f"  - Training data: {PROCESSED_DIR / 'X_train.pkl'}")
         logger.info(f"  - Validation data: {PROCESSED_DIR / 'X_val.pkl'}")
         logger.info(f"  - Test data: {PROCESSED_DIR / 'X_test.pkl'}")
+        
+        if CONFIG.get('compare_feature_selection', False):
+            logger.info(f"\n  - Feature comparison: {PROCESSED_DIR / 'feature_selection_comparison.pkl'}")
+            logger.info(f"    Use this to test both feature sets during model evaluation")
+        
         logger.info("\n")
         
     except Exception as e:

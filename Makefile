@@ -1,24 +1,12 @@
-#################################################################################
-# GLOBALS                                                                       #
-#################################################################################
-
-PROJECT_NAME = accident_severity_predictor
+PROJECT_NAME = src
 PYTHON_VERSION = 3.13
 PYTHON_INTERPRETER = python
-
-#################################################################################
-# COMMANDS                                                                      #
-#################################################################################
-
 
 ## Install Python dependencies
 .PHONY: requirements
 requirements:
 	poetry install
 	
-
-
-
 ## Delete all compiled Python files
 .PHONY: clean
 clean:
@@ -26,23 +14,7 @@ clean:
 	find . -type d -name "__pycache__" -delete
 
 
-## Lint using ruff (use `make format` to do formatting)
-.PHONY: lint
-lint:
-	ruff format --check
-	ruff check
-
-## Format source code with ruff
-.PHONY: format
-format:
-	ruff check --fix
-	ruff format
-
-
-
-
-
-## Set up Python interpreter environment
+## environment
 .PHONY: create_environment
 create_environment:
 	poetry env use $(PYTHON_VERSION)
@@ -50,12 +22,6 @@ create_environment:
 	@echo '$$(poetry env activate)'
 	@echo ">>> Or run commands with:\npoetry run <command>"
 
-
-
-
-#################################################################################
-# PROJECT RULES                                                                 #
-#################################################################################
 
 ## Download and validate data
 .PHONY: data
@@ -68,11 +34,11 @@ data:
 preprocess:
 	poetry run python src/data/preprocess.py
 
-## Run all preprocessing steps (data + preprocess)
+## preprocessing
 .PHONY: pipeline
-pipeline: data preprocess
+pipeline: data 
 
-## Run unit tests with coverage
+## unit test
 .PHONY: test
 test:
 	poetry run pytest tests/ -v --cov=src --cov-report=html --cov-report=term
@@ -126,29 +92,28 @@ clean-tests:
 train:
 	poetry run python src/models/train.py
 
-## Generate EDA and evaluation report
+## EDA 
 .PHONY: eda
 eda:
-	poetry run python src/reports/eda.py
+	poetry run python src/notebooks/5-EDA.py
+	poetry run python src/dashboard.py
 
 ## Full pipeline: preprocess → train → evaluate
 .PHONY: full
 full: preprocess train eda
 
-#################################################################################
-# Self Documenting Commands                                                     #
-#################################################################################
 
-.DEFAULT_GOAL := help
 
-define PRINT_HELP_PYSCRIPT
-import re, sys; \
-lines = '\n'.join([line for line in sys.stdin]); \
-matches = re.findall(r'\n## (.*)\n[\s\S]+?\n([a-zA-Z_-]+):', lines); \
-print('Available rules:\n'); \
-print('\n'.join(['{:25}{}'.format(*reversed(match)) for match in matches]))
-endef
-export PRINT_HELP_PYSCRIPT
+## Lint using ruff (use `make format` to do formatting)
+.PHONY: lint
+lint:
+	ruff format --check
+	ruff check
 
-help:
-	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+## Format source code with ruff
+.PHONY: format
+format:
+	ruff check --fix
+	ruff format
+
+

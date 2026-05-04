@@ -7,8 +7,7 @@ import pickle
 #feature engineering
 df = pd.read_pickle("../data/interim/cleaned_data.pkl")
 
-#drop unwanted features
-df = df.drop(["Accident_Index","Year_x", "Location_Easting_OSGR", "Location_Northing_OSGR", "1st_Road_Number", "2nd_Road_Number", "LSOA_of_Accident_Location", "model", "InScotland", "Police_Force","Was_Vehicle_Left_Hand_Drive", "Vehicle_Leaving_Carriageway", "Number_of_Casualties"], axis=1)
+
 df.info()
 
 #target feature
@@ -82,7 +81,10 @@ df["is_daylight"].value_counts()
 
 #urban or rural
 df["Urban_or_Rural_Area"].value_counts()
-df["is_urban"] = pd.get_dummies(df["Urban_or_Rural_Area"], drop_first=True, dtype=int)
+df["is_urban"] = np.where(
+    (df["Urban_or_Rural_Area"] == "Urban") | (df["Urban_or_Rural_Area"] == "Unallocated"), 
+    1, 0
+)
 df["is_urban"].value_counts()
 df = df.drop(columns=["Urban_or_Rural_Area"])
 

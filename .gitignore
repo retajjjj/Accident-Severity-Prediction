@@ -193,3 +193,7 @@ cython_debug/
 .pypirc
 
 *mlruns/
+
+# MLflow artifacts - exclude test-related files
+reports/mlflow_artifacts/test_*
+reports/mlflow_artifacts/*test*

@@ -227,26 +227,28 @@ class Evaluate:
                         mlflow.log_metric(f"{cls}_precision", float(report_dict[cls]["precision"]))
 
             # ── Confusion matrix artifact ─────────────────────────────
-            fig, ax = plt.subplots(figsize=(7, 6))
-            ConfusionMatrixDisplay.from_predictions(
-                y_true, y_pred, 
-                labels=self.class_names,
-                display_labels=self.class_names,
-                cmap="Blues", 
-                values_format="d", 
-                ax=ax, 
-                colorbar=False
-            )
-            ax.set_title(run_name)
-            safe = run_name.lower().replace(" ", "_")
-            cm_path = ARTIFACTS_DIR / f"{safe}_cm.png"
-            fig.savefig(cm_path, bbox_inches="tight", dpi=150)
-            plt.close(fig)
+            # Skip artifact creation for test runs
+            if not ("test" in run_name.lower()):
+                fig, ax = plt.subplots(figsize=(7, 6))
+                ConfusionMatrixDisplay.from_predictions(
+                    y_true, y_pred, 
+                    labels=self.class_names,
+                    display_labels=self.class_names,
+                    cmap="Blues", 
+                    values_format="d", 
+                    ax=ax, 
+                    colorbar=False
+                )
+                ax.set_title(run_name)
+                safe = run_name.lower().replace(" ", "_")
+                cm_path = ARTIFACTS_DIR / f"{safe}_cm.png"
+                fig.savefig(cm_path, bbox_inches="tight", dpi=150)
+                plt.close(fig)
 
-            if log_to_mlflow:
-                mlflow.log_artifact(str(cm_path), artifact_path="plots")
+                if log_to_mlflow:
+                    mlflow.log_artifact(str(cm_path), artifact_path="plots")
 
-                report_path = ARTIFACTS_DIR / f"{safe}_report.json"
-                with open(report_path, "w") as f:
-                    json.dump(report_dict, f, indent=2)
-                mlflow.log_artifact(str(report_path), artifact_path="reports")
+                    report_path = ARTIFACTS_DIR / f"{safe}_report.json"
+                    with open(report_path, "w") as f:
+                        json.dump(report_dict, f, indent=2)
+                    mlflow.log_artifact(str(report_path), artifact_path="reports")

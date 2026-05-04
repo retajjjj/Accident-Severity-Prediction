@@ -16,19 +16,53 @@ Helper Functions:
     - handle_missing_values()               : Drop high-missing columns, impute others
     - select_features_statistical()         : Correlation-based feature selection
     - select_features_model_based()         : Tree-based feature importance
+    - select_features_rfecv()               : RFECV-based recursive feature elimination
 """
 
 import logging
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_selection import mutual_info_classif, RFECV
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import LogisticRegression
 from scipy.stats import spearmanr
 from typing import Tuple, List
 from imblearn.over_sampling import SMOTE
 
 logger = logging.getLogger(__name__)
+
+
+def encode_target_variable(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode target variable (Accident_Severity) to numeric for modeling.
+    
+    Maps:
+        - Slight: 0
+        - Serious: 1
+        - Fatal: 2
+    
+    Args:
+        df: DataFrame with 'Accident_Severity' column
+    
+    Returns:
+        DataFrame with Accident_Severity encoded as numeric (int64)
+    """
+    df = df.copy()
+    
+    if 'Accident_Severity' in df.columns:
+        # Check if already numeric
+        if not pd.api.types.is_numeric_dtype(df['Accident_Severity']):
+            severity_map = {'Slight': 0, 'Serious': 1, 'Fatal': 2}
+            df['Accident_Severity'] = df['Accident_Severity'].map(severity_map)
+            # Ensure numeric dtype
+            df['Accident_Severity'] = df['Accident_Severity'].astype('int64')
+            logger.info("✓ Target variable (Accident_Severity) encoded: Slight=0, Serious=1, Fatal=2")
+        else:
+            logger.info("✓ Target variable (Accident_Severity) already numeric")
+    
+    return df
 
 
 def create_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -82,7 +116,7 @@ def create_lighting_features(df: pd.DataFrame) -> pd.DataFrame:
         df: DataFrame with 'Light_Conditions' column
     
     Returns:
-        DataFrame with lighting features added
+        DataFrame with lighting features added (Light_Conditions dropped)
     """
     df = df.copy()
     
@@ -92,11 +126,118 @@ def create_lighting_features(df: pd.DataFrame) -> pd.DataFrame:
         df['is_dark'] = df['Light_Conditions'].fillna('').apply(
             lambda x: 1 if any(kw in str(x) for kw in dark_keywords) else 0
         )
+        df = df.drop(columns=['Light_Conditions'])
     else:
         df['is_dark'] = 0
         logger.warning("Light_Conditions column not found, is_dark set to 0")
     
     logger.info("✓ Lighting features created (is_dark)")
+    return df
+
+
+def encode_road_type_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode Road_Type feature to numeric values.
+    
+    Creates:
+        - Road_Type: Encoded road type (0-2)
+    
+    Args:
+        df: DataFrame with 'Road_Type' column
+    
+    Returns:
+        DataFrame with encoded Road_Type
+    """
+    df = df.copy()
+    
+    if 'Road_Type' in df.columns:
+        road_type_encode = {
+            "Single carriageway": 1,
+            "Dual carriageway": 2,
+            "Roundabout": 0,
+            "One way street": 1,
+            "Slip road": 2,
+            "Unknown": 1
+        }
+        df['Road_Type'] = df['Road_Type'].map(road_type_encode).fillna(1).astype(int)
+        logger.debug("✓ Road_Type encoded")
+    
+    logger.info("✓ Road_Type features encoded")
+    return df
+
+
+def encode_road_surface_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode road surface condition to is_wet_road flag.
+    
+    Creates:
+        - is_wet_road: 1 if "Not Dry", 0 if "Dry"
+    
+    Args:
+        df: DataFrame with 'Road_Surface_Conditions' column
+    
+    Returns:
+        DataFrame with is_wet_road feature (Road_Surface_Conditions dropped)
+    """
+    df = df.copy()
+    
+    if 'Road_Surface_Conditions' in df.columns:
+        # Convert non-Dry to 1, Dry to 0
+        df['is_wet_road'] = (df['Road_Surface_Conditions'] != 'Dry').astype(int)
+        df = df.drop(columns=['Road_Surface_Conditions'])
+        logger.debug("✓ is_wet_road created")
+    
+    logger.info("✓ Road surface features encoded (is_wet_road)")
+    return df
+
+
+def encode_weather_condition_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode weather conditions to is_adverse_weather flag.
+    
+    Creates:
+        - is_adverse_weather: 1 if weather != "Fine no high winds", 0 otherwise
+    
+    Args:
+        df: DataFrame with 'Weather_Conditions' column
+    
+    Returns:
+        DataFrame with is_adverse_weather feature (Weather_Conditions dropped)
+    """
+    df = df.copy()
+    
+    if 'Weather_Conditions' in df.columns:
+        # Convert non-"Fine no high winds" to 1, "Fine no high winds" to 0
+        df['is_adverse_weather'] = (df['Weather_Conditions'] != 'Fine no high winds').astype(int)
+        df = df.drop(columns=['Weather_Conditions'])
+        logger.debug("✓ is_adverse_weather created")
+    
+    logger.info("✓ Weather condition features encoded (is_adverse_weather)")
+    return df
+
+
+def encode_urban_rural_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode urban/rural area to is_urban flag.
+    
+    Creates:
+        - is_urban: 1 if 'Urban' or 'Built-up area', 0 otherwise
+    
+    Args:
+        df: DataFrame with 'Urban_or_Rural_Area' column
+    
+    Returns:
+        DataFrame with is_urban feature (Urban_or_Rural_Area dropped)
+    """
+    df = df.copy()
+    
+    if 'Urban_or_Rural_Area' in df.columns:
+        # Map to binary: Urban/Built-up = 1, Rural = 0
+        df['is_urban'] = (df['Urban_or_Rural_Area'].str.contains('Urban|Built', case=False, na=False)).astype(int)
+        df = df.drop(columns=['Urban_or_Rural_Area'])
+        logger.debug("✓ is_urban created")
+    
+    logger.info("✓ Urban/rural features encoded (is_urban)")
     return df
 
 
@@ -296,6 +437,381 @@ def create_vehicle_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def encode_vehicle_attributes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode vehicle-specific attributes from raw data.
+    
+    Creates:
+        - Vehicle_Type: Encoded vehicle type (0-5)
+        - X1st_Point_of_Impact: Encoded impact point (-1 to 4)
+        - is_petrol: Binary petrol engine flag
+        - is_towing: Binary towing flag
+        - engine_size_category: Binned engine capacity (-1 to 3)
+    
+    Args:
+        df: DataFrame with raw vehicle columns
+    
+    Returns:
+        DataFrame with encoded vehicle attributes
+    """
+    df = df.copy()
+    
+    # Vehicle Type encoding
+    if 'Vehicle_Type' in df.columns:
+        vehicle_type_map = {
+            "Car": 0, "Taxi/Private hire car": 0,
+            "Motorcycle over 500cc": 5, "Motorcycle 125cc and under": 5,
+            "Motorcycle 50cc and under": 5, "Motorcycle over 125cc and up to 500cc": 5,
+            "Motorcycle - unknown cc": 5, "Electric motorcycle": 5,
+            "Van / Goods 3.5 tonnes mgw or under": 2, "Goods over 3.5t. and under 7.5t": 2,
+            "Goods 7.5 tonnes mgw and over": 3, "Goods vehicle - unknown weight": 3,
+            "Bus or coach (17 or more pass seats)": 1, "Minibus (8 - 16 passenger seats)": 1,
+            "Agricultural vehicle": 4, "Other vehicle": 4,
+        }
+        df['Vehicle_Type'] = df['Vehicle_Type'].map(vehicle_type_map).fillna(4).astype(int)
+        logger.debug("✓ Vehicle_Type encoded")
+    
+    # Point of Impact encoding
+    if 'X1st_Point_of_Impact' in df.columns:
+        point_impact_map = {
+            "Data missing or out of range": -1, "Did not impact": 0,
+            "Back": 1, "Front": 2, "Nearside": 3, "Offside": 4
+        }
+        df['X1st_Point_of_Impact'] = df['X1st_Point_of_Impact'].map(point_impact_map).fillna(0).astype(int)
+        logger.debug("✓ X1st_Point_of_Impact encoded")
+    
+    # Petrol engine flag
+    if 'Propulsion_Code' in df.columns:
+        df['is_petrol'] = (df['Propulsion_Code'] == 'Petrol').astype(int)
+        df = df.drop(columns=['Propulsion_Code'])
+        logger.debug("✓ is_petrol created")
+    
+    # Towing/Articulation flag
+    if 'Towing_and_Articulation' in df.columns:
+        towing_map = {
+            "No tow/articulation": 0, "Caravan": 1, "Other tow": 1,
+            "Single trailer": 1, "Double or multiple trailer": 1,
+            "Articulated vehicle": 1, "Data missing or out of range": 0,
+        }
+        df['is_towing'] = df['Towing_and_Articulation'].map(towing_map).fillna(0).astype(int)
+        df = df.drop(columns=['Towing_and_Articulation'])
+        logger.debug("✓ is_towing created")
+    
+    # Engine size category (binned)
+    if 'Engine_Capacity_.CC.' in df.columns:
+        df['engine_size_category'] = pd.cut(
+            df['Engine_Capacity_.CC.'],
+            bins=[0, 1400, 2000, 4000, float('inf')],
+            labels=[0, 1, 2, 3]
+        )
+        df['engine_size_category'] = pd.to_numeric(df['engine_size_category'], errors='coerce').fillna(-1).astype(int)
+        logger.debug("✓ engine_size_category created")
+    
+    logger.info("✓ Vehicle attributes encoded (Vehicle_Type, X1st_Point_of_Impact, is_petrol, is_towing, engine_size_category)")
+    return df
+
+
+def encode_driver_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode driver-specific attributes.
+    
+    Creates:
+        - age: Driver age from midpoints of age bands
+        - is_male: Binary gender encoding (1=Male, 0=Female)
+        - driver_area_encoded: Driver home area type (-1 to 2)
+    
+    Args:
+        df: DataFrame with driver columns
+    
+    Returns:
+        DataFrame with encoded driver features
+    """
+    df = df.copy()
+    
+    # Driver age from bands
+    if 'Age_Band_of_Driver' in df.columns:
+        age_midpoint_map = {
+            "0 - 5": 2.5, "6 - 10": 8, "11 - 15": 13, "16 - 20": 18,
+            "21 - 25": 23, "26 - 35": 30, "36 - 45": 40, "46 - 55": 50,
+            "56 - 65": 60, "66 - 75": 70, "Over 75": 80
+        }
+        df['age'] = df['Age_Band_of_Driver'].map(age_midpoint_map).fillna(30)
+        df = df.drop(columns=['Age_Band_of_Driver'])
+        logger.debug("✓ age created from Age_Band_of_Driver")
+    
+    # Driver gender
+    if 'Sex_of_Driver' in df.columns:
+        gender_map = {"Male": 1, "Female": 0, "Not known": 1, "Data missing or out of range": 1}
+        df['is_male'] = df['Sex_of_Driver'].map(gender_map).fillna(1).astype(int)
+        df = df.drop(columns=['Sex_of_Driver'])
+        logger.debug("✓ is_male created")
+    
+    # Driver home area
+    if 'Driver_Home_Area_Type' in df.columns:
+        driver_area_map = {
+            "Urban area": 0, "Small town": 1, "Rural": 2, "Data missing or out of range": -1
+        }
+        df['driver_area_encoded'] = df['Driver_Home_Area_Type'].map(driver_area_map).fillna(-1).astype(int)
+        df = df.drop(columns=['Driver_Home_Area_Type'])
+        logger.debug("✓ driver_area_encoded created")
+    
+    logger.info("✓ Driver features encoded (age, is_male, driver_area_encoded)")
+    return df
+
+
+def encode_manoeuvre_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode vehicle manoeuvre types.
+    
+    Creates:
+        - manoeuvre_encoded: Grouped manoeuvre types (0-5, -1 for unknown)
+    
+    Args:
+        df: DataFrame with Vehicle_Manoeuvre column
+    
+    Returns:
+        DataFrame with encoded manoeuvre
+    """
+    df = df.copy()
+    
+    if 'Vehicle_Manoeuvre' in df.columns:
+        manoeuvre_map = {
+            "Going ahead other": "going_ahead", "Going ahead right-hand bend": "going_ahead",
+            "Going ahead left-hand bend": "going_ahead", "Turning right": "turning",
+            "Turning left": "turning", "U-turn": "turning",
+            "Waiting to go - held up": "stationary", "Waiting to turn right": "stationary",
+            "Waiting to turn left": "stationary", "Parked": "stationary",
+            "Slowing or stopping": "stationary", "Overtaking moving vehicle - offside": "overtaking",
+            "Overtaking static vehicle - offside": "overtaking", "Overtaking - nearside": "overtaking",
+            "Changing lane to right": "lane_change", "Changing lane to left": "lane_change",
+            "Moving off": "other", "Reversing": "other", "Data missing or out of range": "unknown",
+        }
+        
+        manoeuvre_encode = {
+            "going_ahead": 0, "stationary": 1, "turning": 2,
+            "lane_change": 3, "other": 4, "overtaking": 5, "unknown": -1,
+        }
+        
+        df['manoeuvre_grouped'] = df['Vehicle_Manoeuvre'].map(manoeuvre_map)
+        df['manoeuvre_encoded'] = df['manoeuvre_grouped'].map(manoeuvre_encode).fillna(-1).astype(int)
+        df = df.drop(columns=['Vehicle_Manoeuvre', 'manoeuvre_grouped'])
+        logger.debug("✓ manoeuvre_encoded created")
+    
+    logger.info("✓ Manoeuvre features encoded (manoeuvre_encoded)")
+    return df
+
+
+def encode_junction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode junction-related attributes.
+    
+    Creates:
+        - Junction_Location: Encoded junction location (0-5, -1 for unknown)
+        - junction_control_encoded: Encoded junction control type (0-4, -1 for unknown)
+        - junction_detail_encoded: Encoded junction detail (0-6, -1 for unknown)
+    
+    Args:
+        df: DataFrame with junction columns
+    
+    Returns:
+        DataFrame with encoded junction features
+    """
+    df = df.copy()
+    
+    # Junction Location
+    if 'Junction_Location' in df.columns:
+        junction_location_map = {
+            "Not at or within 20 metres of junction": 0,
+            "Cleared junction or waiting/parked at junction exit": 1,
+            "Entering from slip road": 2, "Leaving roundabout": 2,
+            "Entering roundabout": 3, "Leaving main road": 3, "Entering main road": 3,
+            "Mid Junction - on roundabout or on main road": 4,
+            "Approaching junction or waiting/parked at junction approach": 5,
+            "Data missing or out of range": -1,
+        }
+        df['Junction_Location'] = df['Junction_Location'].map(junction_location_map).fillna(-1).astype(int)
+        logger.debug("✓ Junction_Location encoded")
+    
+    # Junction Control
+    if 'Junction_Control' in df.columns:
+        junction_control_map = {
+            "Not at junction or within 20 metres": 0, "Authorised person": 1,
+            "Stop sign": 2, "Auto traffic signal": 3, "Give way or uncontrolled": 4,
+            "Data missing or out of range": -1,
+        }
+        df['junction_control_encoded'] = df['Junction_Control'].map(junction_control_map).fillna(-1).astype(int)
+        df = df.drop(columns=['Junction_Control'])
+        logger.debug("✓ junction_control_encoded created")
+    
+    # Junction Detail
+    if 'Junction_Detail' in df.columns:
+        junction_detail_map = {
+            "Not at junction or within 20 metres": 0, "Slip road": 1,
+            "Mini-roundabout": 2, "Roundabout": 2, "Private drive or entrance": 3,
+            "T or staggered junction": 4, "Other junction": 4, "Crossroads": 5,
+            "More than 4 arms (not roundabout)": 6, "Data missing or out of range": -1,
+        }
+        df['junction_detail_encoded'] = df['Junction_Detail'].map(junction_detail_map).fillna(-1).astype(int)
+        df = df.drop(columns=['Junction_Detail'])
+        logger.debug("✓ junction_detail_encoded created")
+    
+    logger.info("✓ Junction features encoded (Junction_Location, junction_control_encoded, junction_detail_encoded)")
+    return df
+
+
+def encode_journey_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode journey-related attributes.
+    
+    Creates:
+        - journey_purpose_encoded: Encoded journey purpose (-1 to 2)
+    
+    Args:
+        df: DataFrame with Journey_Purpose_of_Driver column
+    
+    Returns:
+        DataFrame with encoded journey features
+    """
+    df = df.copy()
+    
+    if 'Journey_Purpose_of_Driver' in df.columns:
+        journey_map = {
+            "Commuting to/from work": 0, "Taking pupil to/from school": 0,
+            "Pupil riding to/from school": 0, "Other": 1, "Not known": 1,
+            "Other/Not known (2005-10)": 1, "Journey as part of work": 2,
+            "Data missing or out of range": -1,
+        }
+        df['journey_purpose_encoded'] = df['Journey_Purpose_of_Driver'].map(journey_map).fillna(-1).astype(int)
+        df = df.drop(columns=['Journey_Purpose_of_Driver'])
+        logger.debug("✓ journey_purpose_encoded created")
+    
+    logger.info("✓ Journey features encoded (journey_purpose_encoded)")
+    return df
+
+
+def encode_administrative_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Encode administrative and location-based aggregated features.
+    
+    Creates:
+        - make: Vehicle make encoded by mean accident severity
+        - district_severity_rate: Mean severity by district
+        - district_accident_volume: Number of accidents by district
+        - highway_severity_rate: Mean severity by highway
+        - highway_accident_volume: Number of accidents by highway
+        - 1st_Road_Class: Encoded road class
+    
+    Args:
+        df: DataFrame with administrative columns (Accident_Severity already numeric)
+    
+    Returns:
+        DataFrame with encoded administrative features
+    """
+    df = df.copy()
+    
+    # Vehicle make encoded by severity (target encoding)
+    # Use string severity values for proper target encoding
+    if 'make' in df.columns and 'Accident_Severity' in df.columns:
+        # If target is numeric, map back to strings for proper encoding
+        if pd.api.types.is_numeric_dtype(df['Accident_Severity']):
+            severity_reverse_map = {0: 'Slight', 1: 'Serious', 2: 'Fatal'}
+            df_temp = df.copy()
+            df_temp['Accident_Severity_str'] = df_temp['Accident_Severity'].map(severity_reverse_map)
+            # Create severity weights for proper encoding
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            make_encoding = df_temp.groupby('make')['Accident_Severity_str'].apply(lambda x: x.map(severity_weights).mean())
+        else:
+            # Use string values directly
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            make_encoding = df.groupby('make')['Accident_Severity'].apply(lambda x: x.map(severity_weights).mean())
+        
+        df['make'] = df['make'].map(make_encoding).fillna(1.0)  # Default to Slight weight
+        logger.debug("✓ make encoded by severity")
+    
+    # District-level features
+    if 'Local_Authority_(District)' in df.columns and 'Accident_Severity' in df.columns:
+        # Use proper severity weights for target encoding
+        if pd.api.types.is_numeric_dtype(df['Accident_Severity']):
+            severity_reverse_map = {0: 'Slight', 1: 'Serious', 2: 'Fatal'}
+            df_temp = df.copy()
+            df_temp['Accident_Severity_str'] = df_temp['Accident_Severity'].map(severity_reverse_map)
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            district_severity = df_temp.groupby('Local_Authority_(District)')['Accident_Severity_str'].apply(lambda x: x.map(severity_weights).mean())
+        else:
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            district_severity = df.groupby('Local_Authority_(District)')['Accident_Severity'].apply(lambda x: x.map(severity_weights).mean())
+        
+        district_volume = df.groupby('Local_Authority_(District)').size()
+        df['district_severity_rate'] = df['Local_Authority_(District)'].map(district_severity).fillna(1.0)  # Default to Slight weight
+        df['district_accident_volume'] = df['Local_Authority_(District)'].map(district_volume).fillna(df.groupby('Local_Authority_(District)').size().median())
+        df = df.drop(columns=['Local_Authority_(District)'])
+        logger.debug("✓ District features created")
+    
+    # Highway-level features
+    if 'Local_Authority_(Highway)' in df.columns and 'Accident_Severity' in df.columns:
+        # Use proper severity weights for target encoding
+        if pd.api.types.is_numeric_dtype(df['Accident_Severity']):
+            severity_reverse_map = {0: 'Slight', 1: 'Serious', 2: 'Fatal'}
+            df_temp = df.copy()
+            df_temp['Accident_Severity_str'] = df_temp['Accident_Severity'].map(severity_reverse_map)
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            highway_severity = df_temp.groupby('Local_Authority_(Highway)')['Accident_Severity_str'].apply(lambda x: x.map(severity_weights).mean())
+        else:
+            severity_weights = {'Slight': 1, 'Serious': 2, 'Fatal': 3}
+            highway_severity = df.groupby('Local_Authority_(Highway)')['Accident_Severity'].apply(lambda x: x.map(severity_weights).mean())
+        
+        highway_volume = df.groupby('Local_Authority_(Highway)').size()
+        df['highway_severity_rate'] = df['Local_Authority_(Highway)'].map(highway_severity).fillna(1.0)  # Default to Slight weight
+        df['highway_accident_volume'] = df['Local_Authority_(Highway)'].map(highway_volume).fillna(df.groupby('Local_Authority_(Highway)').size().median())
+        df = df.drop(columns=['Local_Authority_(Highway)'])
+        logger.debug("✓ Highway features created")
+    
+    # Road class encoding
+    if '1st_Road_Class' in df.columns:
+        road_class_map = {"M": 0, "A": 1, "D": 2, "B": 3, "C": 4, "Unclassified": 5}
+        df['1st_Road_Class'] = df['1st_Road_Class'].map(road_class_map).fillna(5).astype(int)
+        logger.debug("✓ 1st_Road_Class encoded")
+    
+    logger.info("✓ Administrative features encoded (make, district_*, highway_*, 1st_Road_Class)")
+    return df
+
+
+def create_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create interaction features combining multiple attributes.
+    
+    Creates:
+        - speed_x_road_risk: Speed limit × Road Type interaction
+        - wet_road_speed: Wet road + high speed (≥60 km/h) interaction
+        - young_driver_night: Young driver (≤25) + darkness interaction
+    
+    Args:
+        df: DataFrame with base features
+    
+    Returns:
+        DataFrame with interaction features added
+    """
+    df = df.copy()
+    
+    # Speed × Road Risk interaction
+    if 'Speed_limit' in df.columns and 'Road_Type' in df.columns:
+        df['speed_x_road_risk'] = (df['Speed_limit'] * df['Road_Type']).astype(int)
+        logger.debug("✓ speed_x_road_risk created")
+    
+    # Wet road + high speed interaction
+    if 'is_wet_road' in df.columns and 'Speed_limit' in df.columns:
+        df['wet_road_speed'] = ((df['is_wet_road'] == 1) & (df['Speed_limit'] >= 60)).astype(int)
+        logger.debug("✓ wet_road_speed created")
+    
+    # Young driver + darkness interaction
+    if 'age' in df.columns and 'is_dark' in df.columns:
+        df['young_driver_night'] = ((df['age'] <= 25) & (df['is_dark'] == 1)).astype(int)
+        logger.debug("✓ young_driver_night created")
+    
+    logger.info("✓ Interaction features created (speed_x_road_risk, wet_road_speed, young_driver_night)")
+    return df
+
+
 def detect_and_handle_outliers(df: pd.DataFrame, 
                                method: str = 'iqr',
                                iqr_multiplier: float = 1.5,
@@ -320,9 +836,9 @@ def detect_and_handle_outliers(df: pd.DataFrame,
     df = df.copy()
     outlier_stats = {'method': method, 'action': action, 'columns_affected': []}
     
-    # Identify numerical columns (excluding identifiers)
+    # Identify numerical columns (excluding identifiers and target variable)
     num_cols = df.select_dtypes(include=[np.number]).columns
-    exclude_cols = ['Accident_Index', 'Vehicle_Index', 'Casualty_Index']
+    exclude_cols = ['Accident_Index', 'Vehicle_Index', 'Casualty_Index', 'Accident_Severity']
     num_cols = [col for col in num_cols if col not in exclude_cols]
     
     for col in num_cols:
@@ -642,3 +1158,223 @@ def apply_smote(X_train: pd.DataFrame,
     logger.info(f"  Class distribution after SMOTE:\n{pd.Series(y_train_balanced).value_counts()}")
     
     return pd.DataFrame(X_train_balanced, columns=X_train.columns), pd.Series(y_train_balanced)
+
+
+def select_features_rfecv(X: pd.DataFrame, 
+                         y: pd.Series,
+                         min_features_to_select: int = 15,
+                         random_state: int = 42,
+                         cv_folds: int = 5) -> Tuple[List[str], pd.DataFrame]:
+    """
+    Select features using RFECV (Recursive Feature Elimination with Cross-Validation).
+    
+    This method iteratively removes features and ranks them by importance across multiple
+    cross-validation folds, automatically determining the optimal number of features.
+    
+    RATIONALE (from Phase 3 notebook):
+    - LogisticRegression used as base estimator for linear relationships
+    - StratifiedKFold(5) ensures balanced class distribution across folds
+    - Automatically identifies optimal feature set through cross-validation
+    - More robust than single-shot methods (better generalizes to unseen data)
+    
+    LEAKAGE PREVENTION:
+    Post-accident variables (NOT available at prediction time) are automatically excluded:
+    - Number_of_Casualties: Directly caused by accident severity
+    - Did_Police_Officer_Attend_Scene_of_Accident: Recorded post-incident
+    
+    Args:
+        X: Feature matrix (numeric only)
+        y: Target variable
+        min_features_to_select: Minimum features to retain (default: 15, requirement: ≥7)
+        random_state: Random seed for reproducibility
+        cv_folds: Number of cross-validation folds (default: 5)
+    
+    Returns:
+        (selected_feature_names, ranking_scores_df) 
+        - selected_feature_names: List of feature names selected by RFECV
+        - ranking_scores_df: DataFrame with features ranked by selection order
+    """
+    # Filter to numeric columns only
+    X_numeric = X.select_dtypes(include=[np.number]).copy()
+    
+    if len(X_numeric.columns) == 0:
+        raise ValueError("No numeric columns found for RFECV")
+    
+    logger.info(f"Starting RFECV with {len(X_numeric.columns)} numeric features")
+    logger.info(f"  Base estimator: LogisticRegression")
+    logger.info(f"  Cross-validation: StratifiedKFold({cv_folds})")
+    logger.info(f"  Minimum features to select: {min_features_to_select}\n")
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # LEAKAGE PREVENTION: Exclude post-accident variables
+    # ─────────────────────────────────────────────────────────────────────────
+    # These features are recorded AFTER the accident, not available at prediction time:
+    leakage_features = [
+        'Number_of_Casualties',                        # Directly caused by severity (can't predict before accident)
+        'Did_Police_Officer_Attend_Scene_of_Accident'  # Result of severity, recorded post-incident
+    ]
+    
+    cols_to_drop_leakage = [col for col in leakage_features if col in X_numeric.columns]
+    if cols_to_drop_leakage:
+        logger.info(f"LEAKAGE PREVENTION: Excluding {len(cols_to_drop_leakage)} post-accident variables:")
+        for col in cols_to_drop_leakage:
+            logger.info(f"    - {col}")
+        X_numeric = X_numeric.drop(columns=cols_to_drop_leakage)
+        logger.info(f"  Features after leakage prevention: {len(X_numeric.columns)}\n")
+    
+    # Drop features with >20% missing values
+    logger.info("Dropping features with >20% missing values...")
+    missing_pct = (X_numeric.isnull().sum() / len(X_numeric)) * 100
+    cols_to_drop = missing_pct[missing_pct > 20].index.tolist()
+    
+    if cols_to_drop:
+        logger.info(f"  Dropping {len(cols_to_drop)} features with >20% missing:")
+        for col in cols_to_drop:
+            logger.info(f"    - {col}: {missing_pct[col]:.1f}% missing")
+        X_numeric = X_numeric.drop(columns=cols_to_drop)
+    else:
+        logger.info("  No features with >20% missing")
+    
+    logger.info(f"  Remaining features for RFECV: {len(X_numeric.columns)}\n")
+    
+    # Impute remaining missing values using mean (matches notebook approach)
+    # But handle columns with all NaN by forward/backward fill, then drop if still all NaN
+    logger.info("Imputing remaining missing values with forward fill, backward fill, then median...")
+    
+    # Forward fill then backward fill to handle sequences of NaN
+    X_numeric = X_numeric.ffill().bfill()
+    
+    # For remaining NaN, use median (not mean, as mean of all-NaN is NaN)
+    for col in X_numeric.columns:
+        if X_numeric[col].isnull().any():
+            median_val = X_numeric[col].median()
+            if pd.notna(median_val):
+                X_numeric[col].fillna(median_val, inplace=True)
+            else:
+                # If entire column is NaN, drop it
+                logger.warning(f"  ⚠ Column '{col}' is entirely NaN, dropping from RFECV")
+                X_numeric = X_numeric.drop(columns=[col])
+    
+    # Verify no NaNs remain
+    if X_numeric.isnull().any().any():
+        # Final fallback: drop any remaining columns with NaN
+        cols_with_nan = X_numeric.columns[X_numeric.isnull().any()].tolist()
+        logger.warning(f"  ⚠ Dropping columns still containing NaN: {cols_with_nan}")
+        X_numeric = X_numeric.dropna(axis=1)
+    
+    # Initialize RFECV 
+    cv = StratifiedKFold(cv_folds)
+    # Use class_weight='balanced' to handle imbalanced data without resampling
+    # This gives higher weight to minority classes automatically
+    estimator = LogisticRegression(class_weight='balanced', max_iter=100)
+    
+    logger.info(f"Feature matrix shape: {X_numeric.shape}")
+    logger.info(f"Target variable shape: {y.shape}")
+    logger.info(f"Target variable type: {type(y)}")
+    
+    # Check class distribution before fitting
+    logger.info("\nTarget variable class distribution:")
+    class_dist = pd.Series(y).value_counts().sort_index()
+    logger.info(f"Unique classes: {class_dist.index.tolist()}")
+    for class_val, count in class_dist.items():
+        pct = 100 * count / len(y)
+        logger.info(f"  Class {class_val}: {count:,} samples ({pct:.2f}%)")
+    
+    # Verify we have at least 2 classes
+    if len(class_dist) < 2:
+        logger.error(f"❌ RFECV requires at least 2 classes, but found {len(class_dist)}")
+        logger.error(f"   Unique class values: {class_dist.index.tolist()}")
+        logger.error(f"   Class counts:\n{class_dist}")
+        raise ValueError(f"Cannot fit RFECV with only {len(class_dist)} class(es). Need at least 2 classes.")
+    
+    logger.info(f"\n✓ Class distribution verified ({len(class_dist)} classes present)")
+    logger.info(f"✓ Using class_weight='balanced' to handle imbalance\n")
+    
+    # Use stratified k-fold with min_samples_leaf to avoid single-class folds
+    # For severely imbalanced data, we may need to reduce n_splits
+    try:
+        rfecv = RFECV(
+            estimator=estimator,
+            step=3,  # Remove 3 features at a time for efficiency
+            cv=cv,
+            scoring='accuracy',
+            min_features_to_select=min_features_to_select,
+            n_jobs=2,
+        )
+        
+        # Fit RFECV
+        logger.info("Fitting RFECV on all data...")
+        rfecv.fit(X_numeric, y)
+        
+    except ValueError as e:
+        if "only one class" in str(e):
+            logger.warning(f"  ⚠ StratifiedKFold(5) created single-class folds with this imbalanced data")
+            logger.warning(f"  Retrying with StratifiedKFold(3)...")
+            
+            # Retry with 3 folds instead of 5
+            cv = StratifiedKFold(3)
+            rfecv = RFECV(
+                estimator=estimator,
+                step=3,
+                cv=cv,
+                scoring='accuracy',
+                min_features_to_select=min_features_to_select,
+                n_jobs=2,
+            )
+            rfecv.fit(X_numeric, y)
+        else:
+            raise
+    
+    # Get selected features
+    selected_features = X_numeric.columns[rfecv.support_].tolist()
+    
+    # Create ranking dataframe (needed for correlation filter)
+    ranking_df = pd.DataFrame({
+        'feature': X_numeric.columns,
+        'ranking': rfecv.ranking_,
+        'support': rfecv.support_,
+    }).sort_values('ranking')
+    
+    # SYSTEMATIC CORRELATION FILTER: Remove one feature from each highly correlated pair
+    # This prevents redundant information (e.g., speed_limit and speed_x_road_risk)
+    if len(selected_features) > 1:
+        # Get correlation matrix for selected features only
+        corr_matrix = X_numeric[selected_features].corr()
+        
+        # Find highly correlated pairs (correlation > 0.8)
+        high_corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_val = corr_matrix.iloc[i, j]
+                if abs(corr_val) > 0.8:
+                    feat1 = corr_matrix.columns[i]
+                    feat2 = corr_matrix.columns[j]
+                    high_corr_pairs.append((feat1, feat2, corr_val))
+        
+        # Remove lower-ranked feature from each pair (lower ranking = removed earlier by RFECV = less important)
+        features_to_remove = set()
+        for feat1, feat2, corr_val in high_corr_pairs:
+            rank1 = ranking_df[ranking_df['feature'] == feat1]['ranking'].values[0]
+            rank2 = ranking_df[ranking_df['feature'] == feat2]['ranking'].values[0]
+            
+            if rank1 < rank2:
+                features_to_remove.add(feat2)
+                logger.info(f"  ⚠ Removing {feat2} due to high correlation with {feat1} (r={corr_val:.3f}, kept lower-ranked)")
+            else:
+                features_to_remove.add(feat1)
+                logger.info(f"  ⚠ Removing {feat1} due to high correlation with {feat2} (r={corr_val:.3f}, kept lower-ranked)")
+        
+        if features_to_remove:
+            selected_features = [f for f in selected_features if f not in features_to_remove]
+            logger.info(f"  Features after correlation filter: {len(selected_features)}\n")
+    
+    logger.info(f"✓ RFECV Complete")
+    logger.info(f"  Optimal features selected: {len(selected_features)}")
+    logger.info(f"  CV accuracy score (mean): {rfecv.cv_results_['mean_test_score'].max():.4f}\n")
+    logger.info(f"Selected features:\n")
+    
+    for i, feat in enumerate(selected_features, 1):
+        logger.info(f"  {i:2d}. {feat}")
+    
+    return selected_features, ranking_df
+

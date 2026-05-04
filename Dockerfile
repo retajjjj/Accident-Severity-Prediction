@@ -8,15 +8,21 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
+# Copy requirements file
+COPY pyproject.toml ./
 
-# Install Poetry
-RUN pip install poetry
-
-# Install dependencies
-RUN poetry config virtualenvs.create false && \
-    poetry install --only=main --no-dev
+# Install dependencies using pip
+RUN pip install --no-cache-dir \
+    fastapi>=0.104.0 \
+    uvicorn[standard]>=0.24.0 \
+    pydantic>=2.5.0 \
+    pandas \
+    numpy \
+    scikit-learn \
+    catboost>=1.2.10 \
+    xgboost>=3.2.0 \
+    lightgbm>=4.6.0 \
+    imbalanced-learn
 
 # Copy application code
 COPY src/ ./src/
